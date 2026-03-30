@@ -142,7 +142,7 @@ class TradingBot:
                 self.order_manager.active_count
             )
             if not can:
-                logger.debug(f"Cannot trade: {reason}")
+                logger.info(f"Risk manager blocked trade: {reason}")
                 break
 
             # Skip if already have active order on this market
@@ -154,6 +154,10 @@ class TradingBot:
             self.structured_log.log_signal(signal)
 
             if not signal.is_tradeable():
+                logger.info(
+                    f"Signal REJECTED [{market.coin} {market.timeframe}] "
+                    f"price={market.yes_price:.4f} reason={signal.reason}"
+                )
                 continue
 
             # Calculate position size
