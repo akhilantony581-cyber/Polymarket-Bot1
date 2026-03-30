@@ -7,6 +7,7 @@ Start with: python dashboard.py (alongside main.py)
 
 import asyncio
 import builtins
+import collections
 import json
 import logging
 import os
@@ -22,16 +23,16 @@ import uvicorn
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Polymarket Bot Dashboard")
 
-# Queue that receives log records from the WSLogHandler
-_log_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+# Circular buffer of recent log lines — included in every state push
+_log_buffer: collections.deque = collections.deque(maxlen=200)
 
 
 class WSLogHandler(logging.Handler):
-    """Forwards log records into the async queue so WebSocket clients see them."""
+    """Captures log records into a circular buffer for the dashboard."""
     def emit(self, record):
         try:
             msg = self.format(record)
-            _log_queue.put_nowait(msg)
+            _log_buffer.append({"t": time.strftime("%H:%M:%S"), "msg": msg})
         except Exception:
             pass
 
@@ -521,7 +522,21 @@ function submitManualTrade() {
 function updateState(s) {
   state = s;
   updatePrices(s.prices);
+  updateLogs(s.logs);
   _updateStateInner(s);
+}
+
+function updateLogs(logs) {
+  if (!logs || !logs.length) return;
+  const log = document.getElementById('log');
+  const wasAtBottom = log.scrollHeight - log.scrollTop <= log.clientHeight + 10;
+  log.innerHTML = logs.map(l => {
+    const cls = l.msg.includes('FILL') || l.msg.includes('WIN') ? 'trade' :
+                l.msg.includes('cancel') || l.msg.includes('REJECTED') ? 'cancel' :
+                l.msg.includes('ERROR') || l.msg.includes('error') ? 'error' : 'info';
+    return `<div class="log-line ${cls}">[${l.t}] ${l.msg}</div>`;
+  }).join('');
+  if (wasAtBottom) log.scrollTop = log.scrollHeight;
 }
 
 // Poll state every 3s via HTTP as backup
@@ -618,7 +633,9 @@ async def get_state():
     bot = get_bot()
     if not bot:
         return {"error": "Bot not running"}
-    return bot.get_state()
+    state = bot.get_state()
+    state["logs"] = list(_log_buffer)[-100:]  # last 100 lines
+    return state
 
 
 @app.post("/control/pause")
@@ -768,8 +785,10 @@ async def websocket_endpoint(websocket: WebSocket):
             await asyncio.sleep(2)
             bot = get_bot()
             if bot:
+                s = bot.get_state()
+                s["logs"] = list(_log_buffer)[-100:]
                 await websocket.send_text(json.dumps({
-                    "type": "state", "payload": bot.get_state()
+                    "type": "state", "payload": s
                 }))
     except WebSocketDisconnect:
         if websocket in active_ws:
@@ -786,21 +805,6 @@ async def broadcast_log(message: str):
         except Exception:
             if ws in active_ws:
                 active_ws.remove(ws)
-
-
-@app.on_event("startup")
-async def _start_log_drainer():
-    """Drain the log queue and broadcast to all connected WebSocket clients."""
-    async def _drain():
-        while True:
-            try:
-                msg = await asyncio.wait_for(_log_queue.get(), timeout=1.0)
-                await broadcast_log(msg)
-            except asyncio.TimeoutError:
-                pass
-            except Exception:
-                pass
-    asyncio.create_task(_drain())
 
 
 # ------------------------------------------------------------------

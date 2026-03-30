@@ -102,10 +102,6 @@ class SignalEngine:
         self._load_config()
 
     def evaluate(self, market: PolymarketMarket) -> SignalResult:
-        """
-        Main evaluation entry point.
-        Returns a SignalResult with mode=NONE if no trade should be taken.
-        """
         yes_price = market.yes_price
         coin = market.coin
         tte = market.seconds_to_expiry
@@ -115,18 +111,55 @@ class SignalEngine:
             return self._reject(market, "below_min_price",
                                 f"YES price {yes_price:.4f} < {self.min_entry}")
 
+        # For Up/Down sniper (price>=0.99, tte<=40s): the market price IS the signal.
+        # Skip Binance requirement — at 0.99 with <40s left, trade immediately.
+        is_updown = self._is_updown_market(market)
+        is_sniper_window = yes_price >= self.sniper_min and tte <= self.sniper_expiry_threshold
+
+        if is_updown and is_sniper_window:
+            return self._evaluate_updown_sniper(market)
+
+        # For all other modes, require Binance data
         binance_data = self.binance.get(coin)
         if not binance_data or not self.binance.is_ready(coin):
             return self._reject(market, "binance_not_ready",
                                 f"Binance data not ready for {coin}")
 
         # Route to correct mode
-        if yes_price >= self.sniper_min and tte <= self.sniper_expiry_threshold:
+        if is_sniper_window:
             return self._evaluate_sniper(market, binance_data)
         elif yes_price >= self.min_entry:
             return self._evaluate_standard(market, binance_data)
 
         return self._reject(market, "no_mode_match", "No mode criteria met")
+
+    def _evaluate_updown_sniper(self, market: PolymarketMarket) -> SignalResult:
+        """
+        Fast path for Up/Down markets in the sniper window (price>=0.99, tte<=40s).
+        The market price of 0.99+ is itself the signal — no Binance check needed.
+        """
+        tte = market.seconds_to_expiry
+        ob = market.order_book
+        # Only block if there's a clear sell wall (strong order book signal)
+        if ob.bids or ob.asks:
+            best_bid = ob.best_bid()
+            if best_bid and best_bid < market.yes_price - 0.015:
+                return self._reject(market, "yes_price_falling",
+                                    f"Best bid {best_bid:.4f} well below YES price — price dropping")
+
+        return SignalResult(
+            market_id=market.market_id,
+            coin=market.coin,
+            timeframe=market.timeframe,
+            yes_price=market.yes_price,
+            strike=market.strike,
+            binance_price=0.0,
+            reversal_score=1.0,
+            mode=TradeMode.SNIPER,
+            kelly_fraction=self._kelly_fraction(99),
+            reason=f"updown_sniper: price={market.yes_price:.4f} tte={tte:.0f}s",
+            timestamp=time.time(),
+        )
 
     def _is_updown_market(self, market: PolymarketMarket) -> bool:
         """True for 'Up or Down' directional markets with no fixed strike."""

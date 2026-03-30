@@ -225,7 +225,12 @@ class ExecutionEngine:
             )
             return order
         except Exception as e:
-            logger.error(f"Order placement failed: {e}")
+            resp_text = ""
+            try:
+                resp_text = e.response.text[:300] if hasattr(e, 'response') else ""
+            except Exception:
+                pass
+            logger.error(f"Order placement failed: {e} {resp_text}")
             return None
 
     # ------------------------------------------------------------------
