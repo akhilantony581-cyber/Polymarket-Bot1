@@ -128,6 +128,11 @@ class TradingBot:
 
     async def _scan_markets(self):
         active_markets = self.poly_listener.get_active_markets()
+        total_tracked = len(self.poly_listener.markets)
+        logger.info(
+            f"Scan: {total_tracked} markets tracked, "
+            f"{len(active_markets)} qualify (price>=0.98, not expired)"
+        )
         if not active_markets:
             return
 

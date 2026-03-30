@@ -101,8 +101,8 @@ class PolymarketListener:
     }
 
     TIMEFRAME_KEYWORDS = {
-        "5m":  ["5-minute", "5 minute", "5min", "5m"],
-        "15m": ["15-minute", "15 minute", "15min", "15m"],
+        "5m":  ["5-minute", "5 minute", "5min", "5m", "5 min", "300s", "5-min"],
+        "15m": ["15-minute", "15 minute", "15min", "15m", "15 min", "900s", "15-min"],
     }
 
     def __init__(self, config: dict):
