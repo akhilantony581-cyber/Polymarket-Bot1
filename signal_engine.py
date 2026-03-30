@@ -128,6 +128,10 @@ class SignalEngine:
 
         return self._reject(market, "no_mode_match", "No mode criteria met")
 
+    def _is_updown_market(self, market: PolymarketMarket) -> bool:
+        """True for 'Up or Down' directional markets with no fixed strike."""
+        return market.strike == 0.0
+
     # ------------------------------------------------------------------
     # STANDARD MODE: full reversal analysis
     # ------------------------------------------------------------------
@@ -136,12 +140,24 @@ class SignalEngine:
         score_components = []
         reasons = []
 
-        # 1. Price buffer from strike
-        distance = self._distance_from_strike(market, bd.price)
-        if distance < self.buffer_pct:
-            return self._reject(market, "insufficient_buffer",
-                                f"Price {bd.price} too close to strike {market.strike} "
-                                f"(buffer {distance:.4f} < {self.buffer_pct})")
+        # 1. Price buffer from strike (skip for Up/Down markets — no strike)
+        if not self._is_updown_market(market):
+            distance = self._distance_from_strike(market, bd.price)
+            if distance < self.buffer_pct:
+                return self._reject(market, "insufficient_buffer",
+                                    f"Price {bd.price} too close to strike {market.strike} "
+                                    f"(buffer {distance:.4f} < {self.buffer_pct})")
+        else:
+            # For Up/Down markets require at least 1m momentum to align
+            m1 = bd.momentum(60)
+            if m1 is not None:
+                expected_up = market.direction in ("above", "up")
+                if expected_up and m1 < 0:
+                    return self._reject(market, "momentum_against_direction",
+                                        f"1m momentum {m1:.3f}% negative for UP market")
+                elif not expected_up and m1 > 0:
+                    return self._reject(market, "momentum_against_direction",
+                                        f"1m momentum {m1:.3f}% positive for DOWN market")
 
         # 2. Price held beyond strike for stability_window
         if not self._held_beyond_strike(market, bd):
@@ -207,15 +223,16 @@ class SignalEngine:
         tte = market.seconds_to_expiry
 
         # Oracle must still be clearly beyond strike
-        if not self._held_beyond_strike(market, bd, window=min(30, tte)):
+        if not self._held_beyond_strike(market, bd, window=min(30, int(tte))):
             return self._reject(market, "oracle_not_confirmed",
                                 "Binance price not confirmed above/below strike")
 
-        # No sudden approach to strike
-        distance = self._distance_from_strike(market, bd.price)
-        if distance < self.sniper_strike_buffer:
-            return self._reject(market, "too_close_to_strike",
-                                f"Distance {distance:.4f} < sniper buffer {self.sniper_strike_buffer}")
+        # No sudden approach to strike (skip for Up/Down — no fixed strike)
+        if not self._is_updown_market(market):
+            distance = self._distance_from_strike(market, bd.price)
+            if distance < self.sniper_strike_buffer:
+                return self._reject(market, "too_close_to_strike",
+                                    f"Distance {distance:.4f} < sniper buffer {self.sniper_strike_buffer}")
 
         # Order book must show no sudden sell wall
         ob = market.order_book
@@ -231,6 +248,8 @@ class SignalEngine:
             return self._reject(market, "yes_price_falling",
                                 f"Best bid {best_bid:.4f} significantly below YES price")
 
+        distance_note = "updown" if self._is_updown_market(market) else \
+            f"{self._distance_from_strike(market, bd.price):.4f}"
         return SignalResult(
             market_id=market.market_id,
             coin=market.coin,
@@ -241,7 +260,7 @@ class SignalEngine:
             reversal_score=2.0,
             mode=TradeMode.SNIPER,
             kelly_fraction=self._kelly_fraction(98),
-            reason=f"sniper_ok: tte={tte:.0f}s distance={distance:.4f}",
+            reason=f"sniper_ok: tte={tte:.0f}s distance={distance_note}",
             timestamp=time.time(),
         )
 
@@ -260,13 +279,26 @@ class SignalEngine:
         if market.seconds_to_expiry < 120:
             return None  # too close to expiry for maker
 
-        distance = self._distance_from_strike(market, bd.price)
-        if distance < self.buffer_pct * 2:
-            return None  # not enough conviction yet
-
         maker_cfg = self.config.get("maker", {})
         min_certainty = maker_cfg.get("min_certainty_score", 80)
-        certainty = min(100, distance / self.buffer_pct * 25)
+
+        if self._is_updown_market(market):
+            # For Up/Down markets: use multi-window momentum alignment as certainty proxy
+            windows = [60, 180, 300]
+            expected_up = market.direction in ("above", "up")
+            aligned = sum(
+                1 for w in windows
+                if (m := bd.momentum(w)) is not None and
+                   ((expected_up and m > 0) or (not expected_up and m < 0))
+            )
+            certainty = aligned / len(windows) * 100
+            distance_note = f"momentum_aligned={aligned}/{len(windows)}"
+        else:
+            distance = self._distance_from_strike(market, bd.price)
+            if distance < self.buffer_pct * 2:
+                return None  # not enough conviction yet
+            certainty = min(100, distance / self.buffer_pct * 25)
+            distance_note = f"distance={distance:.4f}"
 
         if certainty < min_certainty:
             return None
@@ -282,7 +314,7 @@ class SignalEngine:
             reversal_score=100 - certainty,
             mode=TradeMode.MAKER,
             kelly_fraction=kelly,
-            reason=f"maker_ok: certainty={certainty:.0f} distance={distance:.4f}",
+            reason=f"maker_ok: certainty={certainty:.0f} {distance_note}",
             timestamp=time.time(),
         )
 
@@ -290,7 +322,10 @@ class SignalEngine:
     # Scoring helpers
     # ------------------------------------------------------------------
     def _distance_from_strike(self, market: PolymarketMarket, price: float) -> float:
-        """Returns fractional distance of Binance price from strike."""
+        """Returns fractional distance of Binance price from strike.
+        Returns a large positive value for Up/Down markets (no fixed strike)."""
+        if market.strike == 0.0:
+            return 1.0  # Up/Down market — no strike, treat as well clear
         if market.direction == "above":
             return (price - market.strike) / market.strike
         else:
@@ -299,6 +334,13 @@ class SignalEngine:
     def _held_beyond_strike(self, market: PolymarketMarket,
                              bd: SymbolData, window: int = None) -> bool:
         w = window or self.stability_window
+        if market.strike == 0.0:
+            # Up/Down: verify momentum direction has been consistent
+            expected_up = market.direction in ("above", "up")
+            m = bd.momentum(w)
+            if m is None:
+                return bd.is_stable(w)
+            return (expected_up and m > 0) or (not expected_up and m < 0)
         if market.direction == "above":
             return bd.held_above(market.strike, w)
         else:
@@ -307,7 +349,7 @@ class SignalEngine:
     def _momentum_score(self, market: PolymarketMarket, bd: SymbolData) -> float:
         """0 = perfectly aligned, higher = more reversal risk."""
         score = 0.0
-        expected_positive = market.direction == "above"
+        expected_positive = market.direction in ("above", "up")
         windows = [60, 180, 300]
         for w in windows:
             m = bd.momentum(w)
@@ -343,7 +385,7 @@ class SignalEngine:
         m1 = bd.momentum(60)
         if m1 is None:
             return 5.0
-        expected_positive = market.direction == "above"
+        expected_positive = market.direction in ("above", "up")
         if expected_positive and m1 > 0:
             return 0.0
         elif not expected_positive and m1 < 0:
