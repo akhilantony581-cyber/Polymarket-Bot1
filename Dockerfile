@@ -11,10 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
+# Force clean install — remove any cached packages from previous builds
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip uninstall -y py-clob-client eip712-structs py-order-utils 2>/dev/null || true
+
+# Install Python dependencies (cache bust: 2026-03-30-v2)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source
 COPY . .
@@ -25,5 +28,4 @@ RUN mkdir -p logs
 # Expose dashboard port
 EXPOSE 8080
 
-# Run both bot and dashboard concurrently
 CMD ["python", "main.py"]
