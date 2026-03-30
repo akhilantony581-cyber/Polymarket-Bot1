@@ -135,75 +135,51 @@ class PolymarketListener:
 
     async def _refresh_markets(self):
         """
-        Fetch active markets using multiple strategies to find short-term
-        crypto price markets. Polymarket short-term candle markets require
-        targeted queries — they don't surface in default sorting.
+        Fetch all active markets and filter client-side for crypto
+        Up/Down 5min/15min markets. The Gamma API time filters are
+        unreliable — we fetch large batches and filter locally.
         """
         try:
-            now = int(time.time())
             all_markets = []
 
-            # Strategy 1: Markets expiring within the next 30 minutes (5m/15m candles)
-            resp1 = await self._client.get(
-                f"{self.GAMMA_BASE}/markets",
-                params={
-                    "active": True,
-                    "closed": False,
-                    "limit": 100,
-                    "end_date_min": now,
-                    "end_date_max": now + 1800,  # next 30 minutes
-                    "order": "end_date_asc",
-                }
-            )
-            if resp1.status_code == 200:
-                d1 = resp1.json()
-                all_markets += d1 if isinstance(d1, list) else d1.get("markets", [])
-
-            # Strategy 2: Markets expiring within next 2 hours (broader window)
-            resp2 = await self._client.get(
-                f"{self.GAMMA_BASE}/markets",
-                params={
-                    "active": True,
-                    "closed": False,
-                    "limit": 200,
-                    "end_date_min": now,
-                    "end_date_max": now + 7200,
-                    "order": "end_date_asc",
-                }
-            )
-            if resp2.status_code == 200:
-                d2 = resp2.json()
-                all_markets += d2 if isinstance(d2, list) else d2.get("markets", [])
-
-            # Strategy 3: Tag-filtered crypto markets
-            for tag in ["crypto", "bitcoin", "ethereum", "cryptocurrency"]:
-                resp3 = await self._client.get(
+            # Paginate through all active markets (500 per page x 3 pages)
+            for offset in [0, 500, 1000]:
+                resp = await self._client.get(
                     f"{self.GAMMA_BASE}/markets",
-                    params={"active": True, "closed": False,
-                            "limit": 100, "tag": tag}
+                    params={
+                        "active": True,
+                        "closed": False,
+                        "limit": 500,
+                        "offset": offset,
+                    }
                 )
-                if resp3.status_code == 200:
-                    d3 = resp3.json()
-                    all_markets += d3 if isinstance(d3, list) else d3.get("markets", [])
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                batch = data if isinstance(data, list) else data.get("markets", [])
+                all_markets += batch
+                if len(batch) < 500:
+                    break  # no more pages
+                await asyncio.sleep(0.2)
 
-            # Deduplicate by id
+            # Deduplicate
             seen = set()
-            unique_markets = []
+            unique = []
             for m in all_markets:
                 mid = str(m.get("id") or m.get("conditionId", ""))
                 if mid and mid not in seen:
                     seen.add(mid)
-                    unique_markets.append(m)
+                    unique.append(m)
 
             parsed_count = 0
-            for m in unique_markets:
+            for m in unique:
                 parsed = self._parse_market(m)
                 if parsed:
                     self.markets[parsed.market_id] = parsed
                     parsed_count += 1
 
             logger.info(
-                f"Market refresh: {len(unique_markets)} unique fetched, "
+                f"Market refresh: {len(unique)} unique fetched, "
                 f"{parsed_count} matched crypto 5m/15m criteria"
             )
 
@@ -223,24 +199,38 @@ class PolymarketListener:
         if not timeframe:
             return None
 
-        strike = self._extract_strike(text)
-        if strike is None:
-            return None
+        # "Up or Down" directional markets — no fixed strike
+        # Direction determined by which token is UP
+        is_up_down = "up or down" in text or "up/down" in text
+        if is_up_down:
+            strike = 0.0        # no fixed price strike
+            direction = "up"    # we trade the UP token
+        else:
+            strike = self._extract_strike(text)
+            if strike is None:
+                return None
+            direction = "above" if any(
+                w in text for w in ["above", "over", "exceed", "higher"]
+            ) else "below"
 
-        direction = "above" if any(w in text for w in ["above", "over", "exceed", "higher"]) else "below"
-
-        # Handle multiple token field formats from Polymarket API
+        # Token extraction — handles both string IDs and object format
         tokens = m.get("tokens") or m.get("clobTokenIds") or []
         if isinstance(tokens, list) and len(tokens) >= 2:
-            yes_token = tokens[0] if isinstance(tokens[0], str) else tokens[0].get("token_id", "")
-            no_token  = tokens[1] if isinstance(tokens[1], str) else tokens[1].get("token_id", "")
+            t0 = tokens[0]
+            t1 = tokens[1]
+            if isinstance(t0, str):
+                yes_token, no_token = t0, t1
+            else:
+                # For Up/Down markets token[0] = Up, token[1] = Down
+                yes_token = t0.get("token_id", "")
+                no_token  = t1.get("token_id", "")
         else:
             return None
 
         if not yes_token:
             return None
 
-        # Handle multiple expiry field formats from Polymarket API
+        # Expiry field — try all known field names
         expiry = (m.get("endDate") or m.get("endDateIso") or
                   m.get("end_date_iso") or m.get("end_date") or "")
         expiry_ts = self._parse_expiry(expiry)
