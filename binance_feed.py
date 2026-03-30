@@ -92,6 +92,9 @@ class BinanceFeed:
     Exposes per-symbol price, momentum, and volatility data.
     """
 
+    # Binance US endpoint used for US-hosted servers (Railway, AWS us-*)
+    # Falls back to global if US endpoint also fails
+    BINANCE_WS_US   = "wss://stream.binance.us:9443/stream"
     BINANCE_WS_BASE = "wss://stream.binance.com:9443/stream"
 
     def __init__(self, symbols: Dict[str, str]):
@@ -122,19 +125,27 @@ class BinanceFeed:
             await self._ws.close()
 
     async def _run_forever(self):
+        # Try Binance US first (for US-hosted servers), then global
+        endpoints = [self.BINANCE_WS_US, self.BINANCE_WS_BASE]
+        endpoint_idx = 0
         backoff = 1
         while self._running:
             try:
-                await self._connect()
+                await self._connect(endpoints[endpoint_idx % len(endpoints)])
                 backoff = 1
             except Exception as e:
-                logger.warning(f"BinanceFeed connection error: {e}. Retrying in {backoff}s")
+                logger.warning(
+                    f"BinanceFeed error on {endpoints[endpoint_idx % len(endpoints)]}: {e}. "
+                    f"Switching endpoint. Retrying in {backoff}s"
+                )
+                endpoint_idx += 1
                 await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)
+                backoff = min(backoff * 2, 30)
 
-    async def _connect(self):
+    async def _connect(self, base_url: str):
         streams = "/".join(self._stream_names())
-        url = f"{self.BINANCE_WS_BASE}?streams={streams}"
+        url = f"{base_url}?streams={streams}"
+        logger.info(f"BinanceFeed connecting to {base_url}")
         async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
             self._ws = ws
             logger.info("BinanceFeed connected")
