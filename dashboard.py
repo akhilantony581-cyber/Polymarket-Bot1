@@ -422,6 +422,44 @@ setInterval(() => fetch('/state').then(r=>r.json()).then(d=>updateState(d)), 300
 
 # ------------------------------------------------------------------
 # API ROUTES
+@app.get("/debug/markets")
+async def debug_markets():
+    """
+    Fetch raw Polymarket markets and return sample questions
+    so we can see the actual text format and fix keyword matching.
+    """
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"active": True, "closed": False, "limit": 500}
+        )
+        data = resp.json()
+        markets = data if isinstance(data, list) else data.get("markets", [])
+
+    keywords = ["btc", "bitcoin", "eth", "ethereum", "sol", "solana", "xrp",
+                "5m", "5-min", "5 min", "15m", "15-min", "15 min",
+                "minute", "candle", "price"]
+
+    # Show all markets whose question contains any crypto or time keyword
+    relevant = []
+    for m in markets:
+        q = (m.get("question") or "").lower()
+        if any(k in q for k in keywords):
+            relevant.append({
+                "question": m.get("question"),
+                "endDate":  m.get("endDate") or m.get("endDateIso"),
+                "id":       m.get("id") or m.get("conditionId"),
+            })
+
+    return {
+        "total_fetched": len(markets),
+        "keyword_matches": len(relevant),
+        "sample_questions": relevant[:30],
+        "first_5_raw_questions": [m.get("question") for m in markets[:5]],
+    }
+
+
 # ------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
