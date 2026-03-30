@@ -26,4 +26,4 @@ RUN mkdir -p logs
 EXPOSE 8080
 
 # Run both bot and dashboard concurrently
-CMD ["sh", "-c", "python main.py & python dashboard.py"]
+CMD ["python", "main.py"]

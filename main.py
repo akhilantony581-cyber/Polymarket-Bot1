@@ -327,9 +327,22 @@ async def main():
 
     bot = TradingBot(config)
 
-    # Expose bot reference globally for dashboard access
+    # Make bot accessible to dashboard routes (same process)
     import builtins
     builtins._bot = bot
+
+    # Start dashboard server in background within same process
+    import uvicorn
+    from dashboard import app as dashboard_app
+    dash_cfg = config.get("dashboard", {})
+    server_config = uvicorn.Config(
+        dashboard_app,
+        host=dash_cfg.get("host", "0.0.0.0"),
+        port=dash_cfg.get("port", 8080),
+        log_level="warning",
+    )
+    server = uvicorn.Server(server_config)
+    asyncio.create_task(server.serve())
 
     # Graceful shutdown
     loop = asyncio.get_event_loop()
