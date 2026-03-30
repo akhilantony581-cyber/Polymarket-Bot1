@@ -11,9 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Install Python dependencies (v2 - cache bust)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir eip712-structs py-order-utils && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy source
 COPY . .
