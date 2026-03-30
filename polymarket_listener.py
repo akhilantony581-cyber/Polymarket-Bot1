@@ -140,8 +140,7 @@ class PolymarketListener:
     async def _poll_loop(self):
         while self._running:
             try:
-                await self._refresh_markets()
-                await self._refresh_prices()
+                await self._refresh_markets()   # prices included via bestAsk
                 await self._refresh_order_books()
             except Exception as e:
                 logger.warning(f"PolymarketListener poll error: {e}")
