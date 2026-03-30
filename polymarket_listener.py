@@ -144,10 +144,18 @@ class PolymarketListener:
             data = resp.json()
             markets_data = data if isinstance(data, list) else data.get("markets", [])
 
+            parsed_count = 0
             for m in markets_data:
                 parsed = self._parse_market(m)
                 if parsed:
                     self.markets[parsed.market_id] = parsed
+                    parsed_count += 1
+
+            if markets_data:
+                logger.info(
+                    f"Market refresh: {len(markets_data)} fetched, "
+                    f"{parsed_count} matched crypto 5m/15m criteria"
+                )
         except Exception as e:
             logger.warning(f"Failed to refresh market list: {e}")
 
@@ -170,14 +178,20 @@ class PolymarketListener:
 
         direction = "above" if any(w in text for w in ["above", "over", "exceed", "higher"]) else "below"
 
-        tokens = m.get("tokens", [m.get("clobTokenIds", [])])
+        # Handle multiple token field formats from Polymarket API
+        tokens = m.get("tokens") or m.get("clobTokenIds") or []
         if isinstance(tokens, list) and len(tokens) >= 2:
             yes_token = tokens[0] if isinstance(tokens[0], str) else tokens[0].get("token_id", "")
-            no_token = tokens[1] if isinstance(tokens[1], str) else tokens[1].get("token_id", "")
+            no_token  = tokens[1] if isinstance(tokens[1], str) else tokens[1].get("token_id", "")
         else:
             return None
 
-        expiry = m.get("endDateIso") or m.get("end_date_iso", "")
+        if not yes_token:
+            return None
+
+        # Handle multiple expiry field formats from Polymarket API
+        expiry = (m.get("endDate") or m.get("endDateIso") or
+                  m.get("end_date_iso") or m.get("end_date") or "")
         expiry_ts = self._parse_expiry(expiry)
         if not expiry_ts or expiry_ts < time.time():
             return None
