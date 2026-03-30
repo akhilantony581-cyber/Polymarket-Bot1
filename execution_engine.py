@@ -79,7 +79,14 @@ class ExecutionEngine:
         self._api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE", "")
         self._account = None
         self._wallet_address = ""
-        self._http = httpx.AsyncClient(timeout=10.0)
+        # Optional HTTP proxy for geo-restricted regions (set PROXY_URL env var)
+        # e.g. PROXY_URL=http://user:pass@proxy.example.com:8080
+        proxy_url = os.environ.get("PROXY_URL", "")
+        if proxy_url:
+            self._http = httpx.AsyncClient(timeout=10.0, proxy=proxy_url)
+            logger.info(f"ExecutionEngine using proxy: {proxy_url[:30]}...")
+        else:
+            self._http = httpx.AsyncClient(timeout=10.0)
         self._init_account()
 
     def _init_account(self):
