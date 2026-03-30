@@ -18,6 +18,7 @@ from typing import Optional
 
 import httpx
 from eth_account import Account
+from eth_account.messages import encode_typed_data
 
 logger = logging.getLogger(__name__)
 
@@ -137,11 +138,14 @@ class ExecutionEngine:
                 {"name": "signatureType", "type": "uint8"},
             ]
         }
-        signed = self._account.sign_typed_data(
+        # encode_typed_data + sign_message works across all eth_account versions
+        # (sign_typed_data instance method only exists in some versions)
+        msg = encode_typed_data(
             domain_data=domain,
-            message_types=order_types,
+            message_types={"Order": order_types["Order"]},
             message_data=order_struct,
         )
+        signed = self._account.sign_message(msg)
         return signed.signature.hex()
 
     def _build_order_struct(
