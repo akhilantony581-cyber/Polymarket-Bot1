@@ -135,32 +135,72 @@ class PolymarketListener:
 
     async def _refresh_markets(self):
         """
-        Fetch all active markets and filter client-side for crypto
-        Up/Down 5min/15min markets. The Gamma API time filters are
-        unreliable — we fetch large batches and filter locally.
+        Fetch crypto 5m/15m markets via two strategies:
+        1. Gamma /events endpoint (groups recurring series — best for 5m crypto)
+        2. Gamma /markets with short end_date window as fallback
         """
         try:
             all_markets = []
 
-            # Paginate through all active markets (500 per page x 3 pages)
-            for offset in [0, 500, 1000]:
+            # Strategy 1: /events endpoint — recurring series like "Bitcoin Up or Down"
+            # are grouped as events; each event contains individual market windows
+            for tag in ["crypto", "bitcoin", "ethereum"]:
+                try:
+                    resp = await self._client.get(
+                        f"{self.GAMMA_BASE}/events",
+                        params={"active": True, "closed": False, "tag": tag, "limit": 100}
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        events = data if isinstance(data, list) else data.get("events", [])
+                        for event in events:
+                            # Each event has a markets list
+                            for m in event.get("markets", []):
+                                m.setdefault("question", event.get("title", ""))
+                                all_markets.append(m)
+                        logger.info(f"Events tag={tag}: {len(events)} events found")
+                    await asyncio.sleep(0.1)
+                except Exception as e:
+                    logger.debug(f"Events fetch tag={tag}: {e}")
+
+            # Strategy 2: /markets with near-term end_date (markets expiring soon)
+            import datetime as dt
+            now_iso = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            soon_iso = (dt.datetime.utcnow() + dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
                 resp = await self._client.get(
                     f"{self.GAMMA_BASE}/markets",
                     params={
                         "active": True,
                         "closed": False,
+                        "end_date_min": now_iso,
+                        "end_date_max": soon_iso,
                         "limit": 500,
-                        "offset": offset,
                     }
                 )
-                if resp.status_code != 200:
-                    break
-                data = resp.json()
-                batch = data if isinstance(data, list) else data.get("markets", [])
-                all_markets += batch
-                if len(batch) < 500:
-                    break  # no more pages
-                await asyncio.sleep(0.2)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    batch = data if isinstance(data, list) else data.get("markets", [])
+                    all_markets += batch
+                    logger.info(f"Short-expiry markets (next 1h): {len(batch)} fetched")
+            except Exception as e:
+                logger.debug(f"Short-expiry fetch error: {e}")
+
+            # Strategy 3: full paginated fetch as final fallback
+            if not all_markets:
+                for offset in [0, 500, 1000]:
+                    resp = await self._client.get(
+                        f"{self.GAMMA_BASE}/markets",
+                        params={"active": True, "closed": False, "limit": 500, "offset": offset}
+                    )
+                    if resp.status_code != 200:
+                        break
+                    data = resp.json()
+                    batch = data if isinstance(data, list) else data.get("markets", [])
+                    all_markets += batch
+                    if len(batch) < 500:
+                        break
+                    await asyncio.sleep(0.2)
 
             # Deduplicate
             seen = set()
@@ -171,11 +211,11 @@ class PolymarketListener:
                     seen.add(mid)
                     unique.append(m)
 
-            # Debug: log first 10 market titles so we can see actual field names
-            logger.info("Sample market titles (first 10):")
+            # Debug: log first 10 titles so we can diagnose field names
+            logger.info(f"DEBUG sample titles (first 10 of {len(unique)}):")
             for m in unique[:10]:
-                logger.info(f"  >> {m.get('question') or m.get('title') or '[no title]'}"
-                            f" | closed={m.get('closed')} | keys={list(m.keys())[:8]}")
+                title = m.get("question") or m.get("title") or "[no title]"
+                logger.info(f"  >> {title} | endDate={m.get('endDate','?')} | keys={list(m.keys())[:6]}")
 
             # Pre-filter then parse
             candidates = [m for m in unique if self.is_valid_market(m)]
@@ -189,9 +229,9 @@ class PolymarketListener:
                     parsed_count += 1
 
             logger.info(
-                f"Market refresh: {len(unique)} unique fetched, "
+                f"Market refresh: {len(unique)} unique, "
                 f"{len(candidates)} candidates, "
-                f"{parsed_count} matched crypto 5m/15m criteria"
+                f"{parsed_count} matched crypto 5m/15m"
             )
 
         except Exception as e:
