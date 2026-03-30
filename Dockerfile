@@ -2,9 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (required for web3 + py-clob-client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
+    libssl-dev \
+    libffi-dev \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
