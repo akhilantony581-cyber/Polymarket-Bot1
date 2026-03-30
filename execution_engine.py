@@ -18,7 +18,7 @@ from typing import Optional
 
 import httpx
 from eth_account import Account
-from eth_account.messages import encode_typed_data
+from eth_account.messages import encode_structured_data
 
 logger = logging.getLogger(__name__)
 
@@ -138,13 +138,22 @@ class ExecutionEngine:
                 {"name": "signatureType", "type": "uint8"},
             ]
         }
-        # encode_typed_data + sign_message works across all eth_account versions
-        # (sign_typed_data instance method only exists in some versions)
-        msg = encode_typed_data(
-            domain_data=domain,
-            message_types={"Order": order_types["Order"]},
-            message_data=order_struct,
-        )
+        # encode_structured_data is the stable EIP-712 API across all eth_account versions
+        structured = {
+            "types": {
+                "EIP712Domain": [
+                    {"name": "name",              "type": "string"},
+                    {"name": "version",           "type": "string"},
+                    {"name": "chainId",           "type": "uint256"},
+                    {"name": "verifyingContract", "type": "address"},
+                ],
+                "Order": order_types["Order"],
+            },
+            "domain": domain,
+            "primaryType": "Order",
+            "message": order_struct,
+        }
+        msg = encode_structured_data(structured)
         signed = self._account.sign_message(msg)
         return signed.signature.hex()
 
