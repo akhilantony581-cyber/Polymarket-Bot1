@@ -175,8 +175,8 @@ class BinanceFeed:
         return None
 
     def is_ready(self, coin: str) -> bool:
-        """True if we have recent price data for this coin (within 5s)."""
+        """True if we have recent price data for this coin (within 30s)."""
         d = self.data.get(coin)
         if not d:
             return False
-        return (time.time() - d.last_updated) < 5.0
+        return (time.time() - d.last_updated) < 30.0

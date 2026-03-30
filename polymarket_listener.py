@@ -438,10 +438,11 @@ class PolymarketListener:
             await asyncio.sleep(0.1)  # gentle rate limit
 
     def get_active_markets(self) -> List[PolymarketMarket]:
-        """Return all non-expired markets with YES price >= 0.98."""
+        """Return non-expired markets with 0.98 <= YES price < 1.0.
+        Price=1.0 means already resolved (no profit possible)."""
         return [
             m for m in self.markets.values()
-            if not m.is_expired and m.yes_price >= 0.98
+            if not m.is_expired and 0.98 <= m.yes_price < 1.0
         ]
 
     def get_market(self, market_id: str) -> Optional[PolymarketMarket]:
