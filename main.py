@@ -319,7 +319,26 @@ class TradingBot:
                 "total_capital": self.config["capital"]["total"],
                 "max_concurrent": self.config["capital"]["max_concurrent_trades"],
             },
+            "prices": self._get_prices(),
         }
+
+    def _get_prices(self) -> dict:
+        result = {}
+        for coin in ["BTC", "ETH", "SOL", "XRP"]:
+            bd = self.binance.get(coin)
+            # Find Polymarket Up market for this coin (any timeframe)
+            up_market = next(
+                (m for m in self.poly_listener.markets.values()
+                 if m.coin == coin and not m.is_expired),
+                None
+            )
+            result[coin] = {
+                "binance": round(bd.price, 2) if bd else None,
+                "up_ask": round(up_market.yes_price, 4) if up_market else None,
+                "down_ask": round(1 - up_market.yes_price, 4) if up_market else None,
+                "momentum_1m": round(bd.momentum(60), 3) if bd and bd.momentum(60) is not None else None,
+            }
+        return result
 
 
 # ------------------------------------------------------------------
@@ -348,6 +367,10 @@ async def main():
     )
     server = uvicorn.Server(server_config)
     asyncio.create_task(server.serve())
+
+    # Hook Python logging into the dashboard WebSocket live log
+    from dashboard import install_log_handler
+    install_log_handler()
 
     # Graceful shutdown
     loop = asyncio.get_event_loop()

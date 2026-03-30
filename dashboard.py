@@ -22,6 +22,27 @@ import uvicorn
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Polymarket Bot Dashboard")
 
+# Queue that receives log records from the WSLogHandler
+_log_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+
+
+class WSLogHandler(logging.Handler):
+    """Forwards log records into the async queue so WebSocket clients see them."""
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            _log_queue.put_nowait(msg)
+        except Exception:
+            pass
+
+
+def install_log_handler():
+    """Call once from main.py after the event loop is running."""
+    handler = WSLogHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+    handler.setLevel(logging.INFO)
+    logging.getLogger().addHandler(handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -68,6 +89,14 @@ class TradeUpdate(BaseModel):
 class ManualExitRequest(BaseModel):
     order_id: str
     exit_price: float
+
+
+class ManualTradeRequest(BaseModel):
+    coin: str        # BTC / ETH / SOL / XRP
+    direction: str   # up / down
+    timeframe: str   # 5m / 15m
+    price: float     # limit price (0.50 – 0.99)
+    size: float      # USDC size
 
 
 # ------------------------------------------------------------------
@@ -118,7 +147,7 @@ DASHBOARD_HTML = """
   .tag-sniper { background: #f8514922; color: #f85149; border: 1px solid #f85149; }
   .tag-maker { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
   .win { color: #3fb950; } .loss { color: #f85149; }
-  #log { height: 160px; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-size: 11px; }
+  #log { height: 220px; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-size: 11px; }
   .log-line { margin-bottom: 3px; }
   .log-line.info { color: #8b949e; }
   .log-line.trade { color: #3fb950; }
@@ -220,6 +249,54 @@ DASHBOARD_HTML = """
 
 <hr class="divider">
 
+<!-- Live Prices -->
+<div class="grid-2" style="padding-top:0">
+  <div class="card">
+    <h3>Live Prices — Binance vs Polymarket</h3>
+    <table>
+      <thead><tr><th>Coin</th><th>Binance</th><th>PM Up Ask</th><th>PM Down Ask</th><th>Momentum</th></tr></thead>
+      <tbody id="pricesTable">
+        <tr><td colspan="5" style="color:#8b949e;text-align:center;padding:12px">Waiting for data...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Manual Trade</h3>
+    <div class="control-row">
+      <label>Coin</label>
+      <select id="mCoin" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px;font-family:monospace">
+        <option>BTC</option><option>ETH</option><option>SOL</option><option>XRP</option>
+      </select>
+    </div>
+    <div class="control-row">
+      <label>Timeframe</label>
+      <select id="mTf" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px;font-family:monospace">
+        <option>5m</option><option>15m</option>
+      </select>
+    </div>
+    <div class="control-row">
+      <label>Direction</label>
+      <select id="mDir" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px;font-family:monospace">
+        <option value="up">UP</option><option value="down">DOWN</option>
+      </select>
+    </div>
+    <div class="control-row">
+      <label>Limit Price</label>
+      <input type="number" id="mPrice" min="0.50" max="0.99" step="0.01" value="0.60" style="width:100px">
+    </div>
+    <div class="control-row">
+      <label>Size (USDC $)</label>
+      <input type="number" id="mSize" min="5" max="500" step="5" value="10" style="width:100px">
+    </div>
+    <div class="btn-row">
+      <button class="btn-save" onclick="submitManualTrade()">▶ Place Manual Trade</button>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
 <!-- Active Orders -->
 <div class="section-pad">
   <div class="card">
@@ -275,8 +352,7 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 2000);
 }
 
-function updateState(s) {
-  state = s;
+function _updateStateInner(s) {
   const metrics = s.metrics || {};
 
   // Status
@@ -411,7 +487,43 @@ function promptExit(orderId, entryPrice) {
   if (price) api('/positions/exit', {order_id: orderId, exit_price: parseFloat(price)});
 }
 
-connect();
+function updatePrices(prices) {
+  if (!prices) return;
+  const coins = ['BTC','ETH','SOL','XRP'];
+  const tbody = document.getElementById('pricesTable');
+  tbody.innerHTML = coins.map(coin => {
+    const p = prices[coin] || {};
+    const binance = p.binance != null ? '$' + p.binance.toLocaleString('en-US', {maximumFractionDigits:2}) : '—';
+    const upAsk   = p.up_ask  != null ? p.up_ask.toFixed(3)  : '—';
+    const downAsk = p.down_ask != null ? p.down_ask.toFixed(3) : '—';
+    const mom = p.momentum_1m;
+    const momStr = mom != null ? `<span style="color:${mom>=0?'#3fb950':'#f85149'}">${mom>=0?'+':''}${mom.toFixed(2)}%</span>` : '—';
+    return `<tr>
+      <td><b>${coin}</b></td>
+      <td style="color:#58a6ff">${binance}</td>
+      <td style="color:#3fb950">${upAsk}</td>
+      <td style="color:#f85149">${downAsk}</td>
+      <td>${momStr}</td>
+    </tr>`;
+  }).join('');
+}
+
+function submitManualTrade() {
+  const coin = document.getElementById('mCoin').value;
+  const tf   = document.getElementById('mTf').value;
+  const dir  = document.getElementById('mDir').value;
+  const price = parseFloat(document.getElementById('mPrice').value);
+  const size  = parseFloat(document.getElementById('mSize').value);
+  if (!confirm(`Place manual ${dir.toUpperCase()} order for ${coin} ${tf}\\nPrice: ${price}  Size: $${size}`)) return;
+  api('/trade/manual', {coin, direction: dir, timeframe: tf, price, size});
+}
+
+function updateState(s) {
+  state = s;
+  updatePrices(s.prices);
+  _updateStateInner(s);
+}
+
 // Poll state every 3s via HTTP as backup
 setInterval(() => fetch('/state').then(r=>r.json()).then(d=>updateState(d)), 3000);
 </script>
@@ -577,6 +689,56 @@ async def update_trade(data: TradeUpdate):
     return {"message": "Kelly sizing updated"}
 
 
+@app.post("/trade/manual")
+async def manual_trade(data: ManualTradeRequest):
+    bot = get_bot()
+    if not bot:
+        raise HTTPException(503, "Bot not running")
+    if data.price < 0.50 or data.price > 0.99:
+        raise HTTPException(400, "Price must be between 0.50 and 0.99")
+    if data.size < 5:
+        raise HTTPException(400, "Minimum size is $5")
+    if data.coin not in ["BTC", "ETH", "SOL", "XRP"]:
+        raise HTTPException(400, f"Unknown coin: {data.coin}")
+    if data.direction not in ["up", "down"]:
+        raise HTTPException(400, "Direction must be 'up' or 'down'")
+
+    # Find matching market
+    market = next(
+        (m for m in bot.poly_listener.markets.values()
+         if m.coin == data.coin and m.timeframe == data.timeframe
+         and not m.is_expired),
+        None
+    )
+    if not market:
+        raise HTTPException(404, f"No active {data.coin} {data.timeframe} market found")
+
+    from signal_engine import TradeMode, SignalResult
+    import time as _time
+    manual_signal = SignalResult(
+        market_id=market.market_id,
+        coin=market.coin,
+        timeframe=market.timeframe,
+        yes_price=data.price,
+        strike=market.strike,
+        binance_price=0.0,
+        reversal_score=0.0,
+        mode=TradeMode.STANDARD,
+        kelly_fraction=0.10,
+        reason=f"manual_trade direction={data.direction}",
+        timestamp=_time.time(),
+    )
+    pos = await bot.order_manager.submit(
+        market=market,
+        price=data.price,
+        usdc_size=data.size,
+        mode="manual",
+    )
+    if pos:
+        return {"message": f"Manual {data.direction.upper()} order placed for {data.coin} {data.timeframe} @ {data.price} size=${data.size}"}
+    raise HTTPException(500, "Order submission failed")
+
+
 @app.post("/positions/exit")
 async def manual_exit(data: ManualExitRequest):
     bot = get_bot()
@@ -604,24 +766,24 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_ws.append(websocket)
     try:
-        # Send initial state
         bot = get_bot()
         if bot:
             await websocket.send_text(json.dumps({
-                "type": "state",
-                "payload": bot.get_state()
+                "type": "state", "payload": bot.get_state()
             }))
         while True:
             await asyncio.sleep(2)
+            bot = get_bot()
             if bot:
                 await websocket.send_text(json.dumps({
-                    "type": "state",
-                    "payload": bot.get_state()
+                    "type": "state", "payload": bot.get_state()
                 }))
     except WebSocketDisconnect:
-        active_ws.remove(websocket)
+        if websocket in active_ws:
+            active_ws.remove(websocket)
     except Exception:
-        active_ws.discard(websocket) if hasattr(active_ws, 'discard') else None
+        if websocket in active_ws:
+            active_ws.remove(websocket)
 
 
 async def broadcast_log(message: str):
@@ -629,7 +791,23 @@ async def broadcast_log(message: str):
         try:
             await ws.send_text(json.dumps({"type": "log", "payload": message}))
         except Exception:
-            active_ws.remove(ws)
+            if ws in active_ws:
+                active_ws.remove(ws)
+
+
+@app.on_event("startup")
+async def _start_log_drainer():
+    """Drain the log queue and broadcast to all connected WebSocket clients."""
+    async def _drain():
+        while True:
+            try:
+                msg = await asyncio.wait_for(_log_queue.get(), timeout=1.0)
+                await broadcast_log(msg)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                pass
+    asyncio.create_task(_drain())
 
 
 # ------------------------------------------------------------------
