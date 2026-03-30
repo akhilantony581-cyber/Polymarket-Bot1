@@ -245,6 +245,13 @@ class PolymarketListener:
 
         logger.info(f"Market refresh: {found} markets tracked ({errors} errors)")
 
+        # Prune expired markets so they don't accumulate across cycles
+        expired_ids = [mid for mid, m in self.markets.items() if m.is_expired]
+        for mid in expired_ids:
+            del self.markets[mid]
+        if expired_ids:
+            logger.debug(f"Pruned {len(expired_ids)} expired markets")
+
     def is_valid_market(self, m: dict) -> bool:
         """Quick pre-filter: crypto keyword + timeframe + not closed."""
         if m.get("closed", False):
@@ -373,27 +380,36 @@ class PolymarketListener:
             return None
 
     async def _refresh_prices(self):
-        """Fetch YES prices for all tracked markets."""
+        """Fetch YES prices in batches of 10 to avoid URL length limits."""
         if not self.markets:
             return
-        token_ids = [m.yes_token_id for m in self.markets.values() if m.yes_token_id]
-        if not token_ids:
+        markets_with_tokens = [m for m in self.markets.values() if m.yes_token_id]
+        if not markets_with_tokens:
             return
-        try:
-            resp = await self._client.get(
-                f"{self.CLOB_BASE}/prices",
-                params={"token_ids": ",".join(token_ids[:50])}
-            )
-            resp.raise_for_status()
-            prices = resp.json()
-            price_map = {str(p["token_id"]): float(p.get("price", 0)) for p in prices} \
-                if isinstance(prices, list) else {}
-            for market in self.markets.values():
-                if market.yes_token_id in price_map:
-                    market.yes_price = price_map[market.yes_token_id]
-                    market.last_updated = time.time()
-        except Exception as e:
-            logger.debug(f"Price refresh error: {e}")
+
+        # Batch into groups of 10 to keep URLs short
+        BATCH = 10
+        for i in range(0, len(markets_with_tokens), BATCH):
+            batch = markets_with_tokens[i:i + BATCH]
+            token_ids = [m.yes_token_id for m in batch]
+            try:
+                resp = await self._client.get(
+                    f"{self.CLOB_BASE}/prices",
+                    params={"token_ids": ",".join(token_ids)}
+                )
+                if resp.status_code != 200:
+                    logger.debug(f"Price refresh HTTP {resp.status_code}")
+                    continue
+                prices = resp.json()
+                price_map = {str(p["token_id"]): float(p.get("price", 0)) for p in prices} \
+                    if isinstance(prices, list) else {}
+                for market in batch:
+                    if market.yes_token_id in price_map:
+                        market.yes_price = price_map[market.yes_token_id]
+                        market.last_updated = time.time()
+            except Exception as e:
+                logger.debug(f"Price refresh batch error: {e}")
+            await asyncio.sleep(0.1)
 
     async def _refresh_order_books(self):
         """Fetch order book for markets where YES price >= 0.97."""
