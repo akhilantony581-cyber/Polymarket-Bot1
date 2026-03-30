@@ -428,6 +428,37 @@ async def dashboard():
     return DASHBOARD_HTML
 
 
+@app.get("/health")
+async def health():
+    bot = get_bot()
+    def masked(val: str) -> str:
+        return val[:6] + "..." + val[-4:] if val and len(val) > 10 else ("SET" if val else "MISSING")
+
+    pk    = os.environ.get("POLYMARKET_PRIVATE_KEY", "")
+    ak    = os.environ.get("POLYMARKET_API_KEY", "")
+    sec   = os.environ.get("POLYMARKET_API_SECRET", "")
+    pw    = os.environ.get("POLYMARKET_API_PASSPHRASE", "")
+    tg    = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    rpc   = os.environ.get("POLYGON_RPC_URL", "")
+
+    wallet = ""
+    if bot:
+        wallet = getattr(bot.execution, "_wallet_address", "")
+
+    return {
+        "bot_running":          bot is not None,
+        "wallet_address":       wallet or "not loaded",
+        "POLYMARKET_PRIVATE_KEY":   masked(pk),
+        "POLYMARKET_API_KEY":       masked(ak),
+        "POLYMARKET_API_SECRET":    masked(sec),
+        "POLYMARKET_API_PASSPHRASE": masked(pw),
+        "TELEGRAM_BOT_TOKEN":       masked(tg),
+        "POLYGON_RPC_URL":          rpc if rpc else "MISSING (using default)",
+        "trading_enabled":      bool(pk and ak and sec and pw),
+        "telegram_enabled":     bool(tg),
+    }
+
+
 @app.get("/state")
 async def get_state():
     bot = get_bot()
