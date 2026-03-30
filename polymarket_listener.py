@@ -93,6 +93,20 @@ class PolymarketListener:
     CLOB_BASE = "https://clob.polymarket.com"
     GAMMA_BASE = "https://gamma-api.polymarket.com"
 
+    # Slug prefixes used in Polymarket recurring series
+    COIN_SLUGS = {
+        "BTC": "btc",
+        "ETH": "eth",
+        "SOL": "sol",
+        "XRP": "xrp",
+    }
+
+    TIMEFRAME_SECONDS = {
+        "5m":  300,
+        "15m": 900,
+    }
+
+    # Keep for legacy parsing fallback
     COIN_KEYWORDS = {
         "BTC": ["bitcoin", "btc"],
         "ETH": ["ethereum", "eth"],
@@ -133,109 +147,103 @@ class PolymarketListener:
                 logger.warning(f"PolymarketListener poll error: {e}")
             await asyncio.sleep(self.poll_interval)
 
+    def _current_epoch(self, tf_seconds: int) -> int:
+        """Return the current epoch aligned to the timeframe boundary."""
+        return (int(time.time()) // tf_seconds) * tf_seconds
+
     async def _refresh_markets(self):
         """
-        Fetch crypto 5m/15m markets via two strategies:
-        1. Gamma /events endpoint (groups recurring series — best for 5m crypto)
-        2. Gamma /markets with short end_date window as fallback
+        Fetch crypto 5m/15m markets by constructing their deterministic slugs.
+        Polymarket recurring markets follow: {coin}-updown-{tf}-{epoch}
+        where epoch is the Unix timestamp of the window start, aligned to
+        the timeframe (5m=300s, 15m=900s).
+        We fetch current + next window for each coin/timeframe pair.
         """
-        try:
-            all_markets = []
+        import json as _json
+        found = 0
+        errors = 0
 
-            # Strategy 1: /events endpoint — recurring series like "Bitcoin Up or Down"
-            # are grouped as events; each event contains individual market windows
-            for tag in ["crypto", "bitcoin", "ethereum"]:
-                try:
-                    resp = await self._client.get(
-                        f"{self.GAMMA_BASE}/events",
-                        params={"active": True, "closed": False, "tag": tag, "limit": 100}
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        events = data if isinstance(data, list) else data.get("events", [])
-                        for event in events:
-                            # Each event has a markets list
-                            for m in event.get("markets", []):
-                                m.setdefault("question", event.get("title", ""))
-                                all_markets.append(m)
-                        logger.info(f"Events tag={tag}: {len(events)} events found")
-                    await asyncio.sleep(0.1)
-                except Exception as e:
-                    logger.debug(f"Events fetch tag={tag}: {e}")
+        for coin, slug_prefix in self.COIN_SLUGS.items():
+            for tf, tf_sec in self.TIMEFRAME_SECONDS.items():
+                current_epoch = self._current_epoch(tf_sec)
+                # Fetch current window and next window (in case current just closed)
+                for epoch in [current_epoch, current_epoch + tf_sec]:
+                    slug = f"{slug_prefix}-updown-{tf}-{epoch}"
+                    try:
+                        resp = await self._client.get(
+                            f"{self.GAMMA_BASE}/events/slug/{slug}"
+                        )
+                        if resp.status_code == 404:
+                            continue
+                        if resp.status_code != 200:
+                            logger.debug(f"Slug {slug}: HTTP {resp.status_code}")
+                            continue
 
-            # Strategy 2: /markets with near-term end_date (markets expiring soon)
-            import datetime as dt
-            now_iso = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-            soon_iso = (dt.datetime.utcnow() + dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            try:
-                resp = await self._client.get(
-                    f"{self.GAMMA_BASE}/markets",
-                    params={
-                        "active": True,
-                        "closed": False,
-                        "end_date_min": now_iso,
-                        "end_date_max": soon_iso,
-                        "limit": 500,
-                    }
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    batch = data if isinstance(data, list) else data.get("markets", [])
-                    all_markets += batch
-                    logger.info(f"Short-expiry markets (next 1h): {len(batch)} fetched")
-            except Exception as e:
-                logger.debug(f"Short-expiry fetch error: {e}")
+                        event = resp.json()
 
-            # Strategy 3: full paginated fetch as final fallback
-            if not all_markets:
-                for offset in [0, 500, 1000]:
-                    resp = await self._client.get(
-                        f"{self.GAMMA_BASE}/markets",
-                        params={"active": True, "closed": False, "limit": 500, "offset": offset}
-                    )
-                    if resp.status_code != 200:
-                        break
-                    data = resp.json()
-                    batch = data if isinstance(data, list) else data.get("markets", [])
-                    all_markets += batch
-                    if len(batch) < 500:
-                        break
-                    await asyncio.sleep(0.2)
+                        # Skip closed events
+                        if event.get("closed", False):
+                            continue
 
-            # Deduplicate
-            seen = set()
-            unique = []
-            for m in all_markets:
-                mid = str(m.get("id") or m.get("conditionId", ""))
-                if mid and mid not in seen:
-                    seen.add(mid)
-                    unique.append(m)
+                        # Extract nested market (contains token IDs and prices)
+                        markets_list = event.get("markets", [])
+                        if not markets_list:
+                            logger.debug(f"Slug {slug}: no nested markets")
+                            continue
 
-            # Debug: log first 10 titles so we can diagnose field names
-            logger.info(f"DEBUG sample titles (first 10 of {len(unique)}):")
-            for m in unique[:10]:
-                title = m.get("question") or m.get("title") or "[no title]"
-                logger.info(f"  >> {title} | endDate={m.get('endDate','?')} | keys={list(m.keys())[:6]}")
+                        m = markets_list[0]
 
-            # Pre-filter then parse
-            candidates = [m for m in unique if self.is_valid_market(m)]
-            logger.info(f"Pre-filter: {len(unique)} unique → {len(candidates)} candidates")
+                        # Parse clobTokenIds — it's a JSON string in the API response
+                        raw_token_ids = m.get("clobTokenIds", "[]")
+                        if isinstance(raw_token_ids, str):
+                            token_ids = _json.loads(raw_token_ids)
+                        else:
+                            token_ids = raw_token_ids
 
-            parsed_count = 0
-            for m in candidates:
-                parsed = self._parse_market(m)
-                if parsed:
-                    self.markets[parsed.market_id] = parsed
-                    parsed_count += 1
+                        if len(token_ids) < 2:
+                            logger.debug(f"Slug {slug}: missing token IDs")
+                            continue
 
-            logger.info(
-                f"Market refresh: {len(unique)} unique, "
-                f"{len(candidates)} candidates, "
-                f"{parsed_count} matched crypto 5m/15m"
-            )
+                        yes_token = str(token_ids[0])  # "Up" token
+                        no_token  = str(token_ids[1])  # "Down" token
 
-        except Exception as e:
-            logger.warning(f"Failed to refresh market list: {e}")
+                        # Expiry
+                        expiry_str = m.get("endDate") or event.get("endDate") or ""
+                        expiry_ts = self._parse_expiry(expiry_str)
+                        if not expiry_ts or expiry_ts < time.time():
+                            continue
+
+                        # Price from market object (bestAsk is the YES ask price)
+                        yes_price = float(m.get("bestAsk") or m.get("lastTradePrice") or 0)
+
+                        market_id = str(m.get("id") or m.get("conditionId", slug))
+                        condition_id = str(m.get("conditionId", ""))
+
+                        pm = PolymarketMarket(
+                            market_id=market_id,
+                            condition_id=condition_id,
+                            question=m.get("question") or event.get("title", slug),
+                            coin=coin,
+                            timeframe=tf,
+                            strike=0.0,       # Up/Down markets have no fixed strike
+                            direction="up",   # we always trade the "Up" token
+                            yes_token_id=yes_token,
+                            no_token_id=no_token,
+                            yes_price=yes_price,
+                            expiry_timestamp=expiry_ts,
+                            last_updated=time.time(),
+                        )
+                        self.markets[market_id] = pm
+                        found += 1
+                        logger.debug(f"Tracked: {slug} price={yes_price:.3f} tte={pm.seconds_to_expiry:.0f}s")
+
+                    except Exception as e:
+                        errors += 1
+                        logger.debug(f"Slug {slug} error: {e}")
+
+                    await asyncio.sleep(0.05)
+
+        logger.info(f"Market refresh: {found} markets tracked ({errors} errors)")
 
     def is_valid_market(self, m: dict) -> bool:
         """Quick pre-filter: crypto keyword + timeframe + not closed."""
@@ -287,21 +295,22 @@ class PolymarketListener:
                 w in text for w in ["above", "over", "exceed", "higher"]
             ) else "below"
 
-        # Token extraction — handles both string IDs and object format
-        tokens = m.get("tokens") or m.get("clobTokenIds") or []
+        # Token extraction — clobTokenIds can be a JSON string or list
+        import json as _json
+        raw = m.get("clobTokenIds") or m.get("tokens") or "[]"
+        if isinstance(raw, str):
+            try:
+                tokens = _json.loads(raw)
+            except Exception:
+                tokens = []
+        else:
+            tokens = raw
         yes_token = ""
         no_token = ""
-        if isinstance(tokens, list) and len(tokens) >= 2:
-            t0 = tokens[0]
-            t1 = tokens[1]
-            if isinstance(t0, str):
-                yes_token, no_token = t0, t1
-            else:
-                yes_token = t0.get("token_id", "")
-                no_token  = t1.get("token_id", "")
-        elif isinstance(tokens, list) and len(tokens) == 1:
-            t0 = tokens[0]
+        if len(tokens) >= 2:
+            t0, t1 = tokens[0], tokens[1]
             yes_token = t0 if isinstance(t0, str) else t0.get("token_id", "")
+            no_token  = t1 if isinstance(t1, str) else t1.get("token_id", "")
 
         # Expiry field — try all known field names
         expiry = (m.get("endDate") or m.get("endDateIso") or
