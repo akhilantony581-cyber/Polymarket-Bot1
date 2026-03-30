@@ -171,8 +171,18 @@ class PolymarketListener:
                     seen.add(mid)
                     unique.append(m)
 
+            # Debug: log first 10 market titles so we can see actual field names
+            logger.info("Sample market titles (first 10):")
+            for m in unique[:10]:
+                logger.info(f"  >> {m.get('question') or m.get('title') or '[no title]'}"
+                            f" | closed={m.get('closed')} | keys={list(m.keys())[:8]}")
+
+            # Pre-filter then parse
+            candidates = [m for m in unique if self.is_valid_market(m)]
+            logger.info(f"Pre-filter: {len(unique)} unique → {len(candidates)} candidates")
+
             parsed_count = 0
-            for m in unique:
+            for m in candidates:
                 parsed = self._parse_market(m)
                 if parsed:
                     self.markets[parsed.market_id] = parsed
@@ -180,14 +190,35 @@ class PolymarketListener:
 
             logger.info(
                 f"Market refresh: {len(unique)} unique fetched, "
+                f"{len(candidates)} candidates, "
                 f"{parsed_count} matched crypto 5m/15m criteria"
             )
 
         except Exception as e:
             logger.warning(f"Failed to refresh market list: {e}")
 
+    def is_valid_market(self, m: dict) -> bool:
+        """Quick pre-filter: crypto keyword + timeframe + not closed."""
+        if m.get("closed", False):
+            return False
+        title = (m.get("question") or m.get("title") or "").lower()
+        has_coin = any(
+            kw in title
+            for keywords in self.COIN_KEYWORDS.values()
+            for kw in keywords
+        )
+        if not has_coin:
+            return False
+        has_tf = any(
+            kw in title
+            for keywords in self.TIMEFRAME_KEYWORDS.values()
+            for kw in keywords
+        )
+        return has_tf
+
     def _parse_market(self, m: dict) -> Optional[PolymarketMarket]:
-        question = m.get("question", "").lower()
+        # Use question OR title (Gamma API uses both field names)
+        question = (m.get("question") or m.get("title") or "").lower()
         description = m.get("description", "").lower()
         text = question + " " + description
 
@@ -199,12 +230,15 @@ class PolymarketListener:
         if not timeframe:
             return None
 
+        # Skip closed markets
+        if m.get("closed", False):
+            return None
+
         # "Up or Down" directional markets — no fixed strike
-        # Direction determined by which token is UP
         is_up_down = "up or down" in text or "up/down" in text
         if is_up_down:
-            strike = 0.0        # no fixed price strike
-            direction = "up"    # we trade the UP token
+            strike = 0.0
+            direction = "up"
         else:
             strike = self._extract_strike(text)
             if strike is None:
@@ -215,20 +249,19 @@ class PolymarketListener:
 
         # Token extraction — handles both string IDs and object format
         tokens = m.get("tokens") or m.get("clobTokenIds") or []
+        yes_token = ""
+        no_token = ""
         if isinstance(tokens, list) and len(tokens) >= 2:
             t0 = tokens[0]
             t1 = tokens[1]
             if isinstance(t0, str):
                 yes_token, no_token = t0, t1
             else:
-                # For Up/Down markets token[0] = Up, token[1] = Down
                 yes_token = t0.get("token_id", "")
                 no_token  = t1.get("token_id", "")
-        else:
-            return None
-
-        if not yes_token:
-            return None
+        elif isinstance(tokens, list) and len(tokens) == 1:
+            t0 = tokens[0]
+            yes_token = t0 if isinstance(t0, str) else t0.get("token_id", "")
 
         # Expiry field — try all known field names
         expiry = (m.get("endDate") or m.get("endDateIso") or
