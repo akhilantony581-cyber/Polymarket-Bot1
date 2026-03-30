@@ -1,0 +1,89 @@
+# ============================================================
+# Polymarket Trading Bot — Configuration
+# ============================================================
+
+# --- Capital & Risk ---
+capital:
+  total: 100.0
+  max_concurrent_trades: 2
+  maker_allocation_pct: 0.30       # 30% of capital reserved for maker orders
+
+risk:
+  consecutive_loss_limit: 3        # Stop trading after 3 consecutive losses
+  volatility_spike_threshold: 2.5  # Stop if rolling std dev exceeds this multiplier
+  kelly:
+    score_95_100: 0.15             # 15% of capital
+    score_90_94:  0.10             # 10% of capital
+    score_85_89:  0.06             # 6% of capital
+
+# --- Price Rules ---
+price:
+  min_entry: 0.98                  # HARD FLOOR — never buy below this
+  standard_max: 0.989
+  sniper_min: 0.99
+
+# --- Signal Engine ---
+signal:
+  reversal_score_threshold: 10     # Only trade when score < 10 (0–100 scale)
+  buffer_from_strike_pct: 0.003    # Binance price must be this % beyond strike
+  stability_window_seconds: 30     # Price must hold beyond strike for this long
+  momentum_windows: [60, 180, 300] # 1m, 3m, 5m in seconds
+
+# --- Standard Mode ---
+standard:
+  order_timeout_seconds: 20
+  passive_limit_offset: 0.001      # Place limit this far below best ask
+
+# --- Sniper Mode ---
+sniper:
+  time_to_expiry_threshold: 40     # Seconds remaining to trigger sniper mode
+  order_timeout_seconds: 5
+  reprice_interval_seconds: 3
+  oracle_strike_buffer: 0.003      # Abort if oracle within 0.3% of strike
+  stability_check_seconds: 5
+
+# --- Maker Mode ---
+maker:
+  post_price_range: [0.93, 0.96]   # Post limit orders in this range
+  order_timeout_seconds: 7200      # 2 hours
+  min_certainty_score: 80
+
+# --- Order Book ---
+order_book:
+  min_bid_ask_ratio: 1.2           # Bids must exceed asks by this ratio
+  min_depth_at_price: 100.0        # Min $ depth at entry price level
+
+# --- Markets ---
+markets:
+  coins: ["BTC", "ETH", "SOL", "XRP"]
+  timeframes: ["5m", "15m"]
+  binance_symbols:
+    BTC: "BTCUSDT"
+    ETH: "ETHUSDT"
+    SOL: "SOLUSDT"
+    XRP: "XRPUSDT"
+
+# --- Execution ---
+execution:
+  polygon_rpc: "${POLYGON_RPC_URL}"
+  order_check_interval: 1.0        # Seconds between order status checks
+
+# --- Logging ---
+logging:
+  level: "INFO"
+  trade_log_file: "logs/trades.jsonl"
+  signal_log_file: "logs/signals.jsonl"
+  metrics_log_file: "logs/metrics.jsonl"
+
+# --- Telegram ---
+telegram:
+  enabled: true
+  alert_on_trade: true
+  alert_on_cancel: true
+  alert_on_error: true
+
+# --- Dashboard ---
+dashboard:
+  host: "0.0.0.0"
+  port: 8080
+  config_watch_interval: 2.0       # Seconds between config file re-reads

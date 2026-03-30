@@ -1,0 +1,348 @@
+"""
+main.py
+Bot entry point. Wires all modules together and runs the main trading loop.
+"""
+
+import asyncio
+import logging
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+import yaml
+
+from binance_feed import BinanceFeed
+from polymarket_listener import PolymarketListener
+from signal_engine import SignalEngine, TradeMode
+from execution_engine import ExecutionEngine
+from order_manager import OrderManager
+from risk_manager import RiskManager
+from structured_logger import StructuredLogger
+
+logger = logging.getLogger(__name__)
+
+
+def load_config(path: str = "config.yaml") -> dict:
+    with open(path, "r") as f:
+        raw = yaml.safe_load(f)
+    # Expand environment variables in string values
+    def expand(obj):
+        if isinstance(obj, str):
+            return os.path.expandvars(obj)
+        if isinstance(obj, dict):
+            return {k: expand(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [expand(i) for i in obj]
+        return obj
+    return expand(raw)
+
+
+def setup_logging(config: dict):
+    log_cfg = config.get("logging", {})
+    level = getattr(logging, log_cfg.get("level", "INFO").upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler("logs/bot.log"),
+        ],
+    )
+
+
+class TradingBot:
+    def __init__(self, config: dict):
+        self.config = config
+        self._running = False
+        self._config_path = "config.yaml"
+        self._last_config_mtime = 0.0
+
+        # Initialize all modules
+        coins = config["markets"]["coins"]
+        binance_symbols = config["markets"]["binance_symbols"]
+        symbols = {c: binance_symbols[c] for c in coins if c in binance_symbols}
+
+        self.binance = BinanceFeed(symbols=symbols)
+        self.poly_listener = PolymarketListener(config=config)
+        self.signal_engine = SignalEngine(config=config, binance_feed=self.binance)
+        self.execution = ExecutionEngine(config=config)
+        self.risk_manager = RiskManager(config=config)
+        self.structured_log = StructuredLogger(config=config)
+
+        self.order_manager = OrderManager(
+            config=config,
+            execution=self.execution,
+            signal_engine=self.signal_engine,
+            poly_listener=self.poly_listener,
+            on_fill=self._on_fill,
+            on_cancel=self._on_cancel,
+            on_redeem=self._on_redeem,
+        )
+
+    async def start(self):
+        self._running = True
+        logger.info("=" * 60)
+        logger.info("Polymarket Trading Bot starting")
+        logger.info(f"Capital: ${self.config['capital']['total']}")
+        logger.info(f"Min entry price: {self.config['price']['min_entry']}")
+        logger.info(f"Coins: {self.config['markets']['coins']}")
+        logger.info("=" * 60)
+
+        # Start all data feeds
+        await self.binance.start()
+        await self.poly_listener.start()
+        await self.order_manager.start()
+
+        # Give feeds time to warm up
+        logger.info("Waiting for data feeds to warm up (5s)...")
+        await asyncio.sleep(5)
+
+        # Main loop
+        await asyncio.gather(
+            self._trading_loop(),
+            self._config_watcher(),
+        )
+
+    async def stop(self):
+        self._running = False
+        await self.binance.stop()
+        await self.poly_listener.stop()
+        await self.order_manager.stop()
+        await self.execution.close()
+        await self.risk_manager.close()
+        logger.info("Bot stopped cleanly")
+
+    # ------------------------------------------------------------------
+    # MAIN TRADING LOOP
+    # ------------------------------------------------------------------
+    async def _trading_loop(self):
+        scan_interval = 2.0  # seconds between market scans
+
+        while self._running:
+            try:
+                await self._scan_markets()
+            except Exception as e:
+                logger.error(f"Trading loop error: {e}", exc_info=True)
+            await asyncio.sleep(scan_interval)
+
+    async def _scan_markets(self):
+        active_markets = self.poly_listener.get_active_markets()
+        if not active_markets:
+            return
+
+        for market in active_markets:
+            # Check risk permission before evaluating signal
+            can, reason = self.risk_manager.can_trade(
+                self.order_manager.active_count
+            )
+            if not can:
+                logger.debug(f"Cannot trade: {reason}")
+                break
+
+            # Skip if already have active order on this market
+            if self._market_has_active_order(market.market_id):
+                continue
+
+            # Evaluate signal
+            signal = self.signal_engine.evaluate(market)
+            self.structured_log.log_signal(signal)
+
+            if not signal.is_tradeable():
+                continue
+
+            # Calculate position size
+            size = self.risk_manager.position_size(
+                signal, self.order_manager.active_count
+            )
+            if size <= 0:
+                logger.debug(f"Zero position size for {market.market_id}")
+                continue
+
+            # Place the trade
+            await self._execute_trade(market, signal, size)
+
+        # Evaluate maker opportunities separately
+        await self._scan_maker_opportunities(active_markets)
+
+    async def _execute_trade(self, market, signal, size: float):
+        mode = signal.mode.value
+        price = self._entry_price(market, signal)
+
+        logger.info(
+            f"Executing [{mode}] {market.coin} {market.timeframe} "
+            f"YES@{price:.4f} size=${size:.2f} score={signal.reversal_score:.1f}"
+        )
+
+        pos = await self.order_manager.submit(
+            market=market,
+            price=price,
+            usdc_size=size,
+            mode=mode,
+        )
+        if pos:
+            self.risk_manager.record_trade_open(pos)
+
+    async def _scan_maker_opportunities(self, markets):
+        can, _ = self.risk_manager.can_trade(self.order_manager.active_count)
+        if not can:
+            return
+
+        for market in markets:
+            if self._market_has_active_order(market.market_id):
+                continue
+            maker_signal = self.signal_engine.evaluate_maker(market)
+            if not maker_signal:
+                continue
+
+            size = self.risk_manager.position_size(
+                maker_signal, self.order_manager.active_count
+            )
+            if size <= 0:
+                continue
+
+            maker_cfg = self.config.get("maker", {})
+            lo, hi = maker_cfg.get("post_price_range", [0.93, 0.96])
+            maker_price = round(lo + (hi - lo) * 0.5, 4)  # post at midpoint
+
+            await self._execute_trade(market, maker_signal, size)
+
+    def _entry_price(self, market, signal) -> float:
+        """Determine limit price based on mode."""
+        if signal.mode == TradeMode.SNIPER:
+            # Aggressive: near best ask
+            best_ask = market.order_book.best_ask()
+            if best_ask and best_ask >= self.config["price"]["min_entry"]:
+                return best_ask
+            return market.yes_price
+
+        elif signal.mode == TradeMode.STANDARD:
+            # Passive: slight discount to best ask
+            offset = self.config.get("standard", {}).get("passive_limit_offset", 0.001)
+            best_ask = market.order_book.best_ask()
+            if best_ask:
+                price = best_ask - offset
+                return max(price, self.config["price"]["min_entry"])
+            return market.yes_price
+
+        elif signal.mode == TradeMode.MAKER:
+            lo, hi = self.config.get("maker", {}).get("post_price_range", [0.93, 0.96])
+            return round(lo + (hi - lo) * 0.5, 4)
+
+        return market.yes_price
+
+    def _market_has_active_order(self, market_id: str) -> bool:
+        for pos in self.order_manager.active_orders.values():
+            if pos.market.market_id == market_id:
+                return True
+        return False
+
+    # ------------------------------------------------------------------
+    # CALLBACKS
+    # ------------------------------------------------------------------
+    def _on_fill(self, pos):
+        logger.info(f"FILL: {pos.market.market_id} @ {pos.entry_price:.4f} ${pos.entry_usdc:.2f}")
+        self.structured_log.log_trade_open(pos)
+
+    def _on_cancel(self, pos, reason: str):
+        self.risk_manager.record_cancelled(pos)
+        self.structured_log.log_cancel(pos, reason)
+
+    def _on_redeem(self, pos):
+        self.risk_manager.record_trade_closed(pos, reason="redeemed")
+        self.structured_log.log_trade_closed(pos)
+
+    # ------------------------------------------------------------------
+    # CONFIG HOT-RELOAD WATCHER
+    # ------------------------------------------------------------------
+    async def _config_watcher(self):
+        interval = self.config.get("dashboard", {}).get("config_watch_interval", 2.0)
+        while self._running:
+            await asyncio.sleep(interval)
+            try:
+                mtime = Path(self._config_path).stat().st_mtime
+                if mtime > self._last_config_mtime:
+                    self._last_config_mtime = mtime
+                    new_config = load_config(self._config_path)
+                    self.config = new_config
+                    self.signal_engine.reload_config(new_config)
+                    self.risk_manager.reload_config(new_config)
+                    logger.info("Config reloaded from disk")
+            except Exception as e:
+                logger.warning(f"Config reload error: {e}")
+
+    # ------------------------------------------------------------------
+    # EXPOSE STATE FOR DASHBOARD
+    # ------------------------------------------------------------------
+    def get_state(self) -> dict:
+        return {
+            "running": self._running,
+            "paused": self.risk_manager.is_paused,
+            "halted": self.risk_manager.is_halted,
+            "metrics": self.risk_manager.metrics.to_dict(),
+            "active_orders": [
+                {
+                    "order_id": p.order.order_id,
+                    "market_id": p.market.market_id,
+                    "coin": p.market.coin,
+                    "timeframe": p.market.timeframe,
+                    "mode": p.mode,
+                    "price": p.entry_price,
+                    "size": p.entry_usdc,
+                    "age": round(p.order.age_seconds, 1),
+                }
+                for p in self.order_manager.active_orders.values()
+            ],
+            "positions": [
+                {
+                    "order_id": p.order.order_id,
+                    "market_id": p.market.market_id,
+                    "coin": p.market.coin,
+                    "mode": p.mode,
+                    "entry_price": p.entry_price,
+                    "size": p.entry_usdc,
+                    "redeemed": p.redeemed,
+                    "pnl": p.pnl,
+                }
+                for p in self.order_manager.filled_positions.values()
+            ],
+            "recent_trades": [
+                t.to_dict() for t in self.risk_manager.trade_history[-20:]
+            ],
+            "config": {
+                "min_entry": self.config["price"]["min_entry"],
+                "total_capital": self.config["capital"]["total"],
+                "max_concurrent": self.config["capital"]["max_concurrent_trades"],
+            },
+        }
+
+
+# ------------------------------------------------------------------
+# ENTRY POINT
+# ------------------------------------------------------------------
+async def main():
+    Path("logs").mkdir(exist_ok=True)
+    config = load_config("config.yaml")
+    setup_logging(config)
+
+    bot = TradingBot(config)
+
+    # Expose bot reference globally for dashboard access
+    import builtins
+    builtins._bot = bot
+
+    # Graceful shutdown
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(bot.stop()))
+
+    try:
+        await bot.start()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await bot.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
