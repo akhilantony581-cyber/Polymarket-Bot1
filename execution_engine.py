@@ -5,6 +5,7 @@ via direct Polymarket CLOB REST API calls.
 Uses httpx + eth_account directly — no py-clob-client dependency.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -106,11 +107,12 @@ class ExecutionEngine:
     def _l2_headers(self, method: str, path: str, body: str = "") -> dict:
         timestamp = str(int(time.time()))
         message = timestamp + method.upper() + path + body
-        signature = hmac.new(
-            self._api_secret.encode("utf-8"),
+        raw_sig = hmac.new(
+            base64.b64decode(self._api_secret),
             message.encode("utf-8"),
             digestmod=hashlib.sha256,
-        ).hexdigest()
+        ).digest()
+        signature = base64.b64encode(raw_sig).decode("utf-8")
         return {
             "POLY-ADDRESS": self._wallet_address,
             "POLY-SIGNATURE": signature,
