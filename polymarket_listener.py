@@ -134,28 +134,79 @@ class PolymarketListener:
             await asyncio.sleep(self.poll_interval)
 
     async def _refresh_markets(self):
-        """Fetch active markets and filter for configured coins/timeframes."""
+        """
+        Fetch active markets using multiple strategies to find short-term
+        crypto price markets. Polymarket short-term candle markets require
+        targeted queries — they don't surface in default sorting.
+        """
         try:
-            resp = await self._client.get(
+            now = int(time.time())
+            all_markets = []
+
+            # Strategy 1: Markets expiring within the next 30 minutes (5m/15m candles)
+            resp1 = await self._client.get(
                 f"{self.GAMMA_BASE}/markets",
-                params={"active": True, "closed": False, "limit": 500}
+                params={
+                    "active": True,
+                    "closed": False,
+                    "limit": 100,
+                    "end_date_min": now,
+                    "end_date_max": now + 1800,  # next 30 minutes
+                    "order": "end_date_asc",
+                }
             )
-            resp.raise_for_status()
-            data = resp.json()
-            markets_data = data if isinstance(data, list) else data.get("markets", [])
+            if resp1.status_code == 200:
+                d1 = resp1.json()
+                all_markets += d1 if isinstance(d1, list) else d1.get("markets", [])
+
+            # Strategy 2: Markets expiring within next 2 hours (broader window)
+            resp2 = await self._client.get(
+                f"{self.GAMMA_BASE}/markets",
+                params={
+                    "active": True,
+                    "closed": False,
+                    "limit": 200,
+                    "end_date_min": now,
+                    "end_date_max": now + 7200,
+                    "order": "end_date_asc",
+                }
+            )
+            if resp2.status_code == 200:
+                d2 = resp2.json()
+                all_markets += d2 if isinstance(d2, list) else d2.get("markets", [])
+
+            # Strategy 3: Tag-filtered crypto markets
+            for tag in ["crypto", "bitcoin", "ethereum", "cryptocurrency"]:
+                resp3 = await self._client.get(
+                    f"{self.GAMMA_BASE}/markets",
+                    params={"active": True, "closed": False,
+                            "limit": 100, "tag": tag}
+                )
+                if resp3.status_code == 200:
+                    d3 = resp3.json()
+                    all_markets += d3 if isinstance(d3, list) else d3.get("markets", [])
+
+            # Deduplicate by id
+            seen = set()
+            unique_markets = []
+            for m in all_markets:
+                mid = str(m.get("id") or m.get("conditionId", ""))
+                if mid and mid not in seen:
+                    seen.add(mid)
+                    unique_markets.append(m)
 
             parsed_count = 0
-            for m in markets_data:
+            for m in unique_markets:
                 parsed = self._parse_market(m)
                 if parsed:
                     self.markets[parsed.market_id] = parsed
                     parsed_count += 1
 
-            if markets_data:
-                logger.info(
-                    f"Market refresh: {len(markets_data)} fetched, "
-                    f"{parsed_count} matched crypto 5m/15m criteria"
-                )
+            logger.info(
+                f"Market refresh: {len(unique_markets)} unique fetched, "
+                f"{parsed_count} matched crypto 5m/15m criteria"
+            )
+
         except Exception as e:
             logger.warning(f"Failed to refresh market list: {e}")
 
