@@ -711,32 +711,25 @@ async def manual_trade(data: ManualTradeRequest):
         None
     )
     if not market:
-        raise HTTPException(404, f"No active {data.coin} {data.timeframe} market found")
+        raise HTTPException(404, f"No active {data.coin} {data.timeframe} market found. "
+                                 f"Available: {[f'{m.coin}{m.timeframe}' for m in bot.poly_listener.markets.values() if not m.is_expired]}")
 
-    from signal_engine import TradeMode, SignalResult
-    import time as _time
-    manual_signal = SignalResult(
+    # For DOWN direction use the no_token (Down token); UP uses yes_token (Up token)
+    token_id = market.no_token_id if data.direction == "down" else market.yes_token_id
+    if not token_id:
+        raise HTTPException(500, f"No token ID for {data.direction} direction on {data.coin}")
+
+    order = await bot.execution.place_limit_order(
+        token_id=token_id,
         market_id=market.market_id,
-        coin=market.coin,
-        timeframe=market.timeframe,
-        yes_price=data.price,
-        strike=market.strike,
-        binance_price=0.0,
-        reversal_score=0.0,
-        mode=TradeMode.STANDARD,
-        kelly_fraction=0.10,
-        reason=f"manual_trade direction={data.direction}",
-        timestamp=_time.time(),
-    )
-    pos = await bot.order_manager.submit(
-        market=market,
         price=data.price,
-        usdc_size=data.size,
+        size=data.size,
         mode="manual",
     )
-    if pos:
-        return {"message": f"Manual {data.direction.upper()} order placed for {data.coin} {data.timeframe} @ {data.price} size=${data.size}"}
-    raise HTTPException(500, "Order submission failed")
+    if order:
+        return {"message": f"Manual {data.direction.upper()} order placed for {data.coin} {data.timeframe} @ {data.price} size=${data.size} | order_id={order.order_id}"}
+
+    raise HTTPException(500, f"Order placement failed — check Railway logs for details (API key, balance, or signing error)")
 
 
 @app.post("/positions/exit")

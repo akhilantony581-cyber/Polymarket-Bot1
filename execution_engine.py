@@ -173,7 +173,8 @@ class ExecutionEngine:
         size: float,
         mode: str = "standard",
     ) -> Optional[PlacedOrder]:
-        if price < self.config.get("price", {}).get("min_entry", 0.98):
+        # Only enforce the hard floor for automated modes, not manual trades
+        if mode != "manual" and price < self.config.get("price", {}).get("min_entry", 0.98):
             logger.warning(f"Rejected: price {price} below hard floor")
             return None
         if not self._account:
