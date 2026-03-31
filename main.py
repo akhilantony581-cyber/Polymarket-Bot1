@@ -139,7 +139,7 @@ class TradingBot:
         top = sorted(
             [(m.coin, m.timeframe, *m.best_trade_side, round(m.seconds_to_expiry, 0))
              for m in markets if not m.is_expired],
-            key=lambda x: -x[2]  # sort by price descending (index 2 = 'yes'/'no', 3 = price)
+            key=lambda x: -x[3]  # sort by price descending (index 3 = price)
         )
         # top[i] = (coin, timeframe, side, price, tte)
         top5 = [(f"{c} {tf} {side.upper()}={price:.4f} tte={tte:.0f}s")
