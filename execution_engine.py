@@ -98,13 +98,16 @@ class ExecutionEngine:
                 api_secret=self._api_secret,
                 api_passphrase=self._api_passphrase,
             )
+            proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
             self._clob = ClobClient(
                 CLOB_BASE,
                 key=self._private_key,
                 chain_id=CHAIN_ID,
                 creds=creds,
+                funder=proxy_wallet if proxy_wallet else self._wallet_address,
+                signature_type=1 if proxy_wallet else 0,
             )
-            logger.info(f"ExecutionEngine ready. Wallet: {self._wallet_address}")
+            logger.info(f"ExecutionEngine ready. Wallet: {self._wallet_address} Funder: {proxy_wallet or self._wallet_address}")
         except Exception as e:
             logger.error(f"Account init failed: {e}")
 
