@@ -423,7 +423,7 @@ function _updateStateInner(s) {
         <td>${o.price.toFixed(4)}</td>
         <td>$${o.size.toFixed(2)}</td>
         <td>${o.age}s</td>
-        <td>—</td>
+        <td><button class="btn-exit" onclick="cancelOrder('${o.order_id}')">Cancel</button></td>
       </tr>`).join('');
   }
 
@@ -514,6 +514,11 @@ function saveKelly() {
 function promptExit(orderId, entryPrice) {
   const price = prompt(`Exit price for position ${orderId}?\n(Entry was ${entryPrice.toFixed(4)})`, (entryPrice - 0.005).toFixed(4));
   if (price) api('/positions/exit', {order_id: orderId, exit_price: parseFloat(price)});
+}
+
+function cancelOrder(orderId) {
+  if (!confirm(`Cancel order ${orderId}?`)) return;
+  api('/orders/cancel', {order_id: orderId});
 }
 
 function updatePrices(prices) {
@@ -940,6 +945,25 @@ async def manual_exit(data: ManualExitRequest):
     if success:
         return {"message": f"Manual exit order placed at {data.exit_price}"}
     raise HTTPException(404, "Position not found or exit failed")
+
+
+class CancelOrderRequest(BaseModel):
+    order_id: str
+
+
+@app.post("/orders/cancel")
+async def cancel_order(data: CancelOrderRequest):
+    bot = get_bot()
+    if not bot:
+        raise HTTPException(503, "Bot not running")
+    pos = bot.order_manager.active_orders.get(data.order_id)
+    if not pos:
+        raise HTTPException(404, f"Active order {data.order_id} not found")
+    success = await bot.execution.cancel_order(pos.order)
+    if success:
+        bot.order_manager.active_orders.pop(data.order_id, None)
+        return {"message": f"Order {data.order_id} cancelled"}
+    raise HTTPException(500, "Cancel failed")
 
 
 # ------------------------------------------------------------------
