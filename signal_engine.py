@@ -119,6 +119,11 @@ class SignalEngine:
         if is_updown and is_sniper_window:
             return self._evaluate_updown_sniper(market)
 
+        # For Up/Down markets: Binance is irrelevant (no fixed strike).
+        # Market price already reflects direction — fire immediately.
+        if is_updown:
+            return self._evaluate_updown_sniper(market)
+
         # For all other modes, require Binance data
         binance_data = self.binance.get(coin)
         if not binance_data or not self.binance.is_ready(coin):
