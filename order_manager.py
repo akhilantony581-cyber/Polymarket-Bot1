@@ -36,6 +36,7 @@ class ManagedPosition:
     resolved: bool = False
     redeemed: bool = False
     pnl: Optional[float] = None
+    last_redeem_attempt: float = 0.0   # timestamp of last redeem attempt
 
     @property
     def is_filled(self) -> bool:
@@ -251,16 +252,24 @@ class OrderManager:
     # ------------------------------------------------------------------
     # RESOLUTION WATCHER — auto-redeem
     # ------------------------------------------------------------------
+    REDEEM_RETRY_INTERVAL = 60  # seconds between redeem retries (avoid 429)
+
     async def _resolution_watcher(self):
-        """Checks filled positions every 5s and redeems as soon as market expires."""
+        """Checks filled positions every 10s and redeems as soon as market expires."""
         while self._running:
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             for order_id, pos in list(self.filled_positions.items()):
                 if pos.redeemed:
                     continue
-                if pos.market.is_expired:
-                    logger.info(f"Market expired — redeeming position {order_id[:16]}...")
-                    await self._attempt_redeem(pos)
+                if not pos.market.is_expired:
+                    continue
+                # Rate-limit: don't retry more than once per minute
+                if time.time() - pos.last_redeem_attempt < self.REDEEM_RETRY_INTERVAL:
+                    continue
+                logger.info(f"Market expired — redeeming position {order_id[:16]}...")
+                pos.last_redeem_attempt = time.time()
+                await self._attempt_redeem(pos)
+                await asyncio.sleep(2)  # small gap between sequential redeems
 
     async def _attempt_redeem(self, pos: ManagedPosition):
         shares = pos.order.filled_size
