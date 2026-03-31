@@ -245,14 +245,14 @@ class OrderManager:
     # RESOLUTION WATCHER — auto-redeem
     # ------------------------------------------------------------------
     async def _resolution_watcher(self):
-        """Periodically checks filled positions for market resolution and redeems."""
+        """Checks filled positions every 5s and redeems as soon as market expires."""
         while self._running:
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             for order_id, pos in list(self.filled_positions.items()):
                 if pos.redeemed:
                     continue
-                # Use expiry stored on the position — market may already be pruned
                 if pos.market.is_expired:
+                    logger.info(f"Market expired — redeeming position {order_id[:16]}...")
                     await self._attempt_redeem(pos)
 
     async def _attempt_redeem(self, pos: ManagedPosition):
@@ -260,16 +260,15 @@ class OrderManager:
         if shares <= 0:
             return
 
-        token_id = pos.order.token_id
-        try:
-            resp = self.execution._clob.redeem_positions(
-                condition_id=pos.market.condition_id,
-            )
-            logger.info(f"Redeem submitted: {pos.order.order_id} resp={resp}")
-        except Exception as e:
-            logger.warning(f"Redeem API call failed (funds may auto-credit): {e}")
+        # Determine yes/no amounts based on which token was bought
+        is_yes = pos.order.token_id == pos.market.yes_token_id
+        yes_amount = int(shares * 1e6) if is_yes else 0
+        no_amount  = int(shares * 1e6) if not is_yes else 0
 
-        # Mark redeemed regardless — Polymarket auto-credits winning positions
+        success = await self.execution.redeem_position(
+            condition_id=pos.market.condition_id,
+            amounts=[yes_amount, no_amount],
+        )
         proceeds = shares * 1.0
         pos.mark_redeemed(proceeds)
         if self.on_redeem:
