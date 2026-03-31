@@ -150,7 +150,7 @@ class PolymarketListener:
         self.markets: Dict[str, PolymarketMarket] = {}
         self._running = False
         self._client: Optional[httpx.AsyncClient] = None
-        self.poll_interval = 5.0
+        self.poll_interval = 2.0
 
     async def start(self):
         self._running = True
@@ -437,9 +437,35 @@ class PolymarketListener:
             await asyncio.sleep(0.1)
 
     async def _refresh_order_books(self):
-        """Fetch order book for markets where YES price >= 0.97."""
+        """
+        For markets within 3 minutes of expiry: fetch live CLOB mid-price
+        to replace the lagged Gamma bestAsk. Also fetch order book depth.
+        For all others: fetch order book only if price >= 0.97.
+        """
         for market in list(self.markets.values()):
-            if market.yes_price < 0.97:
+            tte = market.seconds_to_expiry
+            near_expiry = tte <= 180  # within 3 minutes
+
+            # For near-expiry markets: fetch live CLOB price for both tokens
+            if near_expiry and market.yes_token_id and market.no_token_id:
+                try:
+                    # Fetch mid-price for YES token
+                    resp = await self._client.get(
+                        f"{self.CLOB_BASE}/midpoint",
+                        params={"token_id": market.yes_token_id}
+                    )
+                    if resp.status_code == 200:
+                        mid = float(resp.json().get("mid", 0))
+                        if mid > 0:
+                            market.yes_price = mid
+                            market.last_updated = time.time()
+                            logger.debug(f"CLOB mid-price {market.coin} {market.timeframe}: {mid:.4f} tte={tte:.0f}s")
+                except Exception as e:
+                    logger.debug(f"CLOB price refresh error: {e}")
+                await asyncio.sleep(0.05)
+
+            # Fetch order book for high-price markets
+            if market.yes_price < 0.95 and not near_expiry:
                 continue
             try:
                 resp = await self._client.get(
@@ -461,7 +487,7 @@ class PolymarketListener:
                 )
             except Exception as e:
                 logger.debug(f"Order book refresh error for {market.market_id}: {e}")
-            await asyncio.sleep(0.1)  # gentle rate limit
+            await asyncio.sleep(0.05)
 
     def get_active_markets(self) -> List[PolymarketMarket]:
         """Return non-expired markets where best side (UP or DOWN) >= 0.94.
