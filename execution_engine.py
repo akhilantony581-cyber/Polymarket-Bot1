@@ -281,132 +281,83 @@ class ExecutionEngine:
         return None
 
     # ------------------------------------------------------------------
-    # REDEEM via Polymarket Relayer v2 (gasless Safe transaction)
-    # Docs: https://docs.polymarket.com/developers/builders/relayer-client
+    # REDEEM via ProxyWalletFactory.proxy() — same approach as
+    # 0xFives/Polymarket-Arbitrage-Crypto-Trading-Bot-V3
+    # EOA calls factory which executes redeemPositions via proxy wallet.
+    # Costs ~$0.01 in MATIC gas. No relayer needed.
     # ------------------------------------------------------------------
     async def redeem_position(self, condition_id: str, amounts: list) -> bool:
         if not condition_id:
             logger.error("redeem_position: condition_id is empty — cannot redeem")
             return False
 
-        relayer_key = os.environ.get("POLYMARKET_RELAYER_API_KEY", "")
-        proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
         rpc_url = os.environ.get("POLYGON_RPC_URL", "https://polygon-rpc.com")
 
-        if not relayer_key:
-            logger.warning("POLYMARKET_RELAYER_API_KEY not set — cannot auto-redeem. Redeem manually on polymarket.com")
-            return False
-        if not proxy_wallet:
-            logger.warning("POLYMARKET_PROXY_WALLET not set — cannot auto-redeem")
+        if not self._private_key:
+            logger.warning("No private key — cannot redeem")
             return False
 
         try:
             from eth_abi import encode as abi_encode
             from eth_utils import keccak, to_checksum_address
-            from eth_keys import keys as eth_keys_lib
 
-            CTF       = to_checksum_address("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
-            USDC_E    = to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
-            ZERO_ADDR = "0x0000000000000000000000000000000000000000"
-            safe_addr = to_checksum_address(proxy_wallet)
+            PROXY_FACTORY = to_checksum_address("0xaB45c5A4B0c941a2F231C04C3f49182e1A254052")
+            CTF           = to_checksum_address("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
+            USDC_E        = to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
 
-            def k(data: bytes) -> bytes:
-                return keccak(primitive=data)
-
-            def k_text(text: str) -> bytes:
-                return keccak(text=text)
-
-            # ── 1. Encode redeemPositions calldata
+            # ── 1. Encode redeemPositions(USDC_E, 0x0, conditionId, [1,2]) calldata
             cid_bytes = bytes.fromhex(condition_id.replace("0x", "").zfill(64))
-            fn_selector = k_text("redeemPositions(address,bytes32,bytes32,uint256[])")[:4]
-            calldata = fn_selector + abi_encode(
+            redeem_selector = keccak(text="redeemPositions(address,bytes32,bytes32,uint256[])")[:4]
+            redeem_calldata = redeem_selector + abi_encode(
                 ["address", "bytes32", "bytes32", "uint256[]"],
                 [USDC_E, b"\x00" * 32, cid_bytes, [1, 2]],
             )
 
-            # ── 2. Fetch Safe nonce via Polygon RPC
+            # ── 2. Encode ProxyWalletFactory.proxy([(to, typeCode, data, value)])
+            # struct Transaction { address to; uint8 typeCode; bytes data; uint256 value; }
+            proxy_selector = keccak(text="proxy((address,uint8,bytes,uint256)[])")[:4]
+            proxy_calldata = proxy_selector + abi_encode(
+                ["(address,uint8,bytes,uint256)[]"],
+                [[(CTF, 1, redeem_calldata, 0)]],
+            )
+
+            # ── 3. Get EOA nonce
             nonce_resp = await self._http.post(rpc_url, json={
-                "jsonrpc": "2.0", "method": "eth_call",
-                "params": [{"to": safe_addr, "data": "0xaffed0e0"}, "latest"],
-                "id": 1,
+                "jsonrpc": "2.0", "method": "eth_getTransactionCount",
+                "params": [self._wallet_address, "latest"], "id": 1,
             }, timeout=8.0)
-            safe_nonce = int(nonce_resp.json().get("result", "0x0"), 16)
-            logger.info(f"Safe nonce={safe_nonce} for {safe_addr[:12]}...")
+            eoa_nonce = int(nonce_resp.json()["result"], 16)
 
-            # ── 3. EIP-712 digest (Gnosis Safe v1.3.0 — includes chainId=137)
-            domain_typehash = k_text("EIP712Domain(uint256 chainId,address verifyingContract)")
-            domain_separator = k(abi_encode(
-                ["bytes32", "uint256", "address"],
-                [domain_typehash, 137, safe_addr],
-            ))
-
-            safe_tx_typehash = k_text(
-                "SafeTx(address to,uint256 value,bytes data,uint8 operation,"
-                "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,"
-                "address gasToken,address refundReceiver,uint256 nonce)"
-            )
-            safe_tx_hash = k(abi_encode(
-                ["bytes32", "address", "uint256", "bytes32", "uint8",
-                 "uint256", "uint256", "uint256", "address", "address", "uint256"],
-                [safe_tx_typehash, CTF, 0, k(calldata),
-                 0, 0, 0, 0, ZERO_ADDR, ZERO_ADDR, safe_nonce],
-            ))
-
-            digest = k(b"\x19\x01" + domain_separator + safe_tx_hash)
-
-            # ── 4. Sign raw digest (no Ethereum prefix — already in EIP-712 encoding)
-            pk = eth_keys_lib.PrivateKey(bytes.fromhex(self._private_key.replace("0x", "")))
-            sig = pk.sign_msg_hash(digest)
-            v = sig.v + 27  # Safe expects v=27 or v=28
-            signature = (
-                "0x"
-                + sig.r.to_bytes(32, "big").hex()
-                + sig.s.to_bytes(32, "big").hex()
-                + bytes([v]).hex()
-            )
-
-            # ── 5. Submit to Relayer v2
-            payload = {
-                "from":        self._wallet_address,
-                "to":          CTF,
-                "proxyWallet": safe_addr,
-                "data":        "0x" + calldata.hex(),
-                "nonce":       str(safe_nonce),
-                "signature":   signature,
-                "type":        "PROXY",
-                "signatureParams": {
-                    "gasPrice":       "0",
-                    "operation":      "0",
-                    "safeTxnGas":     "0",
-                    "baseGas":        "0",
-                    "gasToken":       ZERO_ADDR,
-                    "refundReceiver": ZERO_ADDR,
-                },
+            # ── 4. Sign and send the transaction (EOA pays ~$0.01 in MATIC gas)
+            tx = {
+                "to":       PROXY_FACTORY,
+                "data":     "0x" + proxy_calldata.hex(),
+                "nonce":    eoa_nonce,
+                "chainId":  137,
+                "gasPrice": 200_000_000_000,  # 200 gwei
+                "gas":      250_000,
+                "value":    0,
             }
-            logger.info(
-                f"Redeem submit → relayer-v2: condition={condition_id[:16]}... "
-                f"nonce={safe_nonce} calldata={len(calldata)}b"
-            )
-            resp = await self._http.post(
-                "https://relayer-v2.polymarket.com/submit",
-                json=payload,
-                headers={
-                    "RELAYER_API_KEY":        relayer_key,
-                    "RELAYER_API_KEY_ADDRESS": safe_addr,
-                    "Content-Type":           "application/json",
-                },
-                timeout=15.0,
-            )
-            body = resp.text[:400]
-            if resp.status_code in (200, 201, 202):
-                logger.info(f"Redeem accepted by Relayer v2: {body}")
+            signed = Account.sign_transaction(tx, self._private_key)
+            raw_hex = "0x" + signed.rawTransaction.hex()
+
+            send_resp = await self._http.post(rpc_url, json={
+                "jsonrpc": "2.0", "method": "eth_sendRawTransaction",
+                "params": [raw_hex], "id": 2,
+            }, timeout=15.0)
+            result = send_resp.json()
+
+            if "result" in result and result["result"]:
+                tx_hash = result["result"]
+                logger.info(f"Redeem tx sent: {tx_hash} condition={condition_id[:16]}...")
                 return True
             else:
-                logger.error(f"Relayer v2 HTTP {resp.status_code}: {body}")
+                err = result.get("error", result)
+                logger.error(f"Redeem tx failed: {err}")
                 return False
 
         except Exception as e:
-            logger.error(f"Relayer redeem exception: {e}", exc_info=True)
+            logger.error(f"Redeem exception: {e}", exc_info=True)
             return False
 
     async def close(self):
