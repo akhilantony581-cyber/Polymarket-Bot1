@@ -1,0 +1,145 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0\froman\fcharset0 Times New Roman;}{\f1\fmodern\fcharset0 Courier New;}}
+{\colortbl;\red0\green0\blue0;\red200\green0\blue0;\red0\green100\blue0;}
+\paperw12240\paperh15840\margl1440\margr1440\margt1440\margb1440
+
+{\pard\sb400\sa200\b\fs36 Polymarket Bot \emdash Lessons Learned\par}
+{\pard\sa200\fs20 A reference document covering every major error encountered building this bot, root causes, and exact fixes. Use this as a starting point for any future Polymarket bot.\par}
+
+{\pard\sb300\sa100\b\fs28 1. Market Discovery \emdash 0 Markets Tracked\par}
+{\pard\sa100\b Time wasted:\b0  Several hours across multiple iterations.\par}
+{\pard\sa100\b Symptom:\b0  {\f1 PolymarketListener: 0 markets found}\par}
+{\pard\sa100\b Root cause:\b0  The standard Gamma API {\f1 GET /markets?active=true} returns ~1500 long-term political/sports markets. Crypto 5m/15m markets never appear because they are short-lived recurring series. Filtering by keyword or pagination does not help.\par}
+{\pard\sa100\b Working solution:\b0  Construct slugs directly. Pattern:\par}
+{\pard\f1\fs18 {coin}-updown-{timeframe}-{epoch}\par}
+{\pard\sa100 Where epoch = {\f1 (int(time.time()) // 300) * 300} for 5m, {\f1 (int(time.time()) // 900) * 900} for 15m. Fetch current + next window. Total: 16 slugs (4 coins x 2 timeframes x 2 windows).\par}
+
+{\pard\sb300\sa100\b\fs28 2. clobTokenIds is a JSON String, Not a List\par}
+{\pard\sa100\b Symptom:\b0  {\f1 TypeError: string indices must be integers}\par}
+{\pard\sa100\b Root cause:\b0  Gamma API returns {\f1 clobTokenIds} as a JSON-encoded string, not a list.\par}
+{\pard\sa100\b Fix:\b0\par}
+{\pard\f1\fs18 raw = m.get("clobTokenIds", "[]")\line
+if isinstance(raw, str):\line
+    token_ids = json.loads(raw)\line
+yes_token = str(token_ids[0])  # UP token\line
+no_token  = str(token_ids[1])  # DOWN token\par}
+
+{\pard\sb300\sa100\b\fs28 3. Markets Accumulating (16 \u8594  32 \u8594  48...)\par}
+{\pard\sa100\b Root cause:\b0  Expired markets never removed from the tracking dict.\par}
+{\pard\sa100\b Fix:\b0  Prune after each refresh cycle:\par}
+{\pard\f1\fs18 expired_ids = [mid for mid, m in self.markets.items() if m.is_expired]\line
+for mid in expired_ids:\line
+    del self.markets[mid]\par}
+
+{\pard\sb300\sa100\b\fs28 4. EIP-712 Signing \emdash Multiple Failed Attempts\par}
+{\pard\sa100\b Time wasted:\b0  3 separate attempts over several hours.\par}
+{\pard\sa100\b Symptom:\b0  {\f1 AttributeError: 'LocalAccount' object has no attribute 'sign_typed_data'} then {\f1 ImportError: cannot import name 'encode_typed_data'}\par}
+{\pard\sa100\b Root cause:\b0  Different eth-account versions expose different APIs. None are stable.\par}
+{\pard\sa100\b Working solution:\b0\par}
+{\pard\f1\fs18 from eth_account.messages import encode_structured_data\line
+msg = encode_structured_data(structured)\line
+signed = account.sign_message(msg)\line
+signature = signed.signature.hex()\par}
+{\pard\sa100\b Better:\b0  Use {\f1 py-clob-client==0.28.0} which handles all signing internally.\par}
+
+{\pard\sb300\sa100\b\fs28 5. L2 HMAC Authentication \emdash 401 Unauthorized\par}
+{\pard\sa100\b Time wasted:\b0  Several hours.\par}
+{\pard\sa100\b Root cause (two bugs):\b0  (1) API secret must be base64-decoded before use as HMAC key. (2) Digest must be base64-encoded, not hex.\par}
+{\pard\sa100\b Fix:\par}
+{\pard\f1\fs18 raw_sig = hmac.new(\line
+    base64.b64decode(self._api_secret),\line
+    message.encode("utf-8"),\line
+    digestmod=hashlib.sha256,\line
+).digest()\line
+signature = base64.b64encode(raw_sig).decode("utf-8")\par}
+{\pard\sa100\b Better:\b0  Use {\f1 py-clob-client==0.28.0}. Pin to exactly 0.28.0 \emdash newer versions have known 401 bugs (issue #187).\par}
+
+{\pard\sb300\sa100\b\fs28 6. API Credentials \emdash Must Be Derived From Private Key\par}
+{\pard\sa100\b Root cause:\b0  Polymarket API keys are NOT arbitrary. They must be derived via Polymarket's auth endpoint using your private key.\par}
+{\pard\sa100\b Fix:\b0\par}
+{\pard\f1\fs18 from py_clob_client.client import ClobClient\line
+client = ClobClient("https://clob.polymarket.com", key=private_key, chain_id=137)\line
+creds = client.create_or_derive_api_creds()\line
+# Save creds.api_key, creds.api_secret, creds.api_passphrase to env vars\par}
+
+{\pard\sb300\sa100\b\fs28 7. Geo-Block \emdash 403 Forbidden\par}
+{\pard\sa100\b Root cause:\b0  Polymarket blocks order placement from US/EU datacenter IPs. Railway defaults to US East.\par}
+{\pard\sa100\b Solutions:\b0  (1) Change Railway region to Singapore (asia-southeast1). (2) Set PROXY_URL env var with a residential proxy (Webshare.io).\par}
+{\pard\sa100\b Critical:\b0  py-clob-client uses the requests library and ignores httpx proxy. Must set OS environment variables:\par}
+{\pard\f1\fs18 os.environ["HTTP_PROXY"] = proxy_url\line
+os.environ["HTTPS_PROXY"] = proxy_url\par}
+{\pard\sa100 Set these BEFORE initializing ClobClient.\par}
+
+{\pard\sb300\sa100\b\fs28 8. Zero Balance Error\par}
+{\pard\sa100\b Symptom:\b0  {\f1 400 \emdash not enough balance: balance: 0, order amount: 9996000}\par}
+{\pard\sa100\b Root cause:\b0  Polymarket creates a proxy wallet (0x3d77...) separate from your MetaMask EOA (0xA369...). Without the funder parameter, ClobClient uses the EOA address which has $0.\par}
+{\pard\sa100\b Fix:\par}
+{\pard\f1\fs18 self._clob = ClobClient(\line
+    CLOB_BASE, key=private_key, chain_id=137, creds=creds,\line
+    funder=proxy_wallet_address,  # visible on polymarket.com\line
+    signature_type=2,             # POLY_GNOSIS_SAFE\line
+)\par}
+{\pard\sa100 Add POLYMARKET_PROXY_WALLET as a Railway env var.\par}
+
+{\pard\sb300\sa100\b\fs28 9. Gamma API Price Lag \emdash Missing Sniper Windows\par}
+{\pard\sa100\b Root cause:\b0  Gamma API bestAsk lags real-time CLOB prices by 30-60 seconds. Market resolves before the price ever shows 0.99.\par}
+{\pard\sa100\b Fix:\b0  For markets within 3 minutes of expiry, fetch live price from CLOB /midpoint:\par}
+{\pard\f1\fs18 if market.seconds_to_expiry <= 180:\line
+    resp = await client.get("https://clob.polymarket.com/midpoint",\line
+        params={"token_id": market.yes_token_id})\line
+    mid = float(resp.json().get("mid", 0))\line
+    if mid > 0:\line
+        market.yes_price = mid\par}
+
+{\pard\sb300\sa100\b\fs28 10. Only Trading UP Token \emdash Halved Opportunities\par}
+{\pard\sa100\b Root cause:\b0  Each market has UP and DOWN tokens. Bot only checked yes_price (UP). If BTC goes down, DOWN token hits 0.99 but bot ignores it.\par}
+{\pard\sa100\b Fix:\b0  Always check both sides:\par}
+{\pard\f1\fs18 @property\line
+def best_trade_side(self):\line
+    no_price = round(1.0 - self.yes_price, 4)\line
+    if no_price > self.yes_price:\line
+        return ('no', no_price)\line
+    return ('yes', self.yes_price)\par}
+
+{\pard\sb300\sa100\b\fs28 11. Order Price Above CLOB Maximum\par}
+{\pard\sa100\b Symptom:\b0  {\f1 400 \emdash price (0.995), min: 0.01 - max: 0.99}\par}
+{\pard\sa100\b Fix:\b0  Always cap order price:\par}
+{\pard\f1\fs18 price = min(price, 0.99)\par}
+
+{\pard\sb300\sa100\b\fs28 12. Sniper Orders Cancelled After 5 Seconds\par}
+{\pard\sa100\b Root cause:\b0  sniper.order_timeout_seconds was 5. Orders cancelled before market fills.\par}
+{\pard\sa100\b Fix:\b0  Set to 55 seconds in config.yaml:\par}
+{\pard\f1\fs18 sniper:\line
+  order_timeout_seconds: 55\par}
+
+{\pard\sb300\sa100\b\fs28 13. Auto-Redeem Never Fires\par}
+{\pard\sa100\b Root cause:\b0  Resolution watcher called poly_listener.get_market() but expired markets were already pruned \emdash always returned None.\par}
+{\pard\sa100\b Fix:\b0  Use expiry stored on the position itself:\par}
+{\pard\f1\fs18 # Before (broken):\line
+market = self.poly_listener.get_market(pos.market.market_id)\line
+if market and market.is_expired: ...\line
+\line
+# After (working):\line
+if pos.market.is_expired:\line
+    await self._attempt_redeem(pos)\par}
+
+{\pard\sb400\sa100\b\fs28 Railway Environment Variables\par}
+{\pard\sa60\f1 POLYMARKET_PRIVATE_KEY     \tab MetaMask private key (0x..., 64 hex chars)\par}
+{\pard\sa60\f1 POLYMARKET_API_KEY         \tab Derived via py-clob-client\par}
+{\pard\sa60\f1 POLYMARKET_API_SECRET      \tab Derived via py-clob-client\par}
+{\pard\sa60\f1 POLYMARKET_API_PASSPHRASE  \tab Derived via py-clob-client\par}
+{\pard\sa60\f1 POLYMARKET_PROXY_WALLET    \tab Proxy wallet shown on polymarket.com\par}
+{\pard\sa60\f1 POLYMARKET_RELAYER_API_KEY \tab From Settings > Relayer API Keys\par}
+{\pard\sa60\f1 PROXY_URL                  \tab Residential proxy URL (Webshare.io)\par}
+{\pard\sa60\f1 ANTHROPIC_API_KEY          \tab For AI trading agent on dashboard\par}
+
+{\pard\sb400\sa100\b\fs28 Recommended Dependencies\par}
+{\pard\f1\fs18 py-clob-client==0.28.0   # Pin exactly \emdash newer versions have auth bugs\line
+httpx==0.27.0\line
+fastapi==0.111.0\line
+uvicorn[standard]==0.30.1\line
+pyyaml==6.0.1\line
+python-dotenv==1.0.1\line
+anthropic>=0.40.0\line
+# Do NOT pin eth-account \emdash let py-clob-client resolve it\par}
+}

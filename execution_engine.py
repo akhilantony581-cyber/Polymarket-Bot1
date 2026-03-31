@@ -284,35 +284,50 @@ class ExecutionEngine:
     # REDEEM via Polymarket Relayer API (gasless)
     # ------------------------------------------------------------------
     async def redeem_position(self, condition_id: str, amounts: list) -> bool:
+        if not condition_id:
+            logger.error("redeem_position: condition_id is empty — cannot redeem")
+            return False
+
         relayer_key = os.environ.get("POLYMARKET_RELAYER_API_KEY", "")
         if not relayer_key:
-            logger.warning("POLYMARKET_RELAYER_API_KEY not set — skipping redeem call")
-            return True  # Polymarket auto-credits anyway
+            logger.warning("POLYMARKET_RELAYER_API_KEY not set — cannot auto-redeem. Redeem manually on polymarket.com")
+            return False
+
+        # Use proxy wallet address for the header (associated with the relayer API key)
+        proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", self._wallet_address)
 
         headers = {
-            "RELAYER_API_KEY": relayer_key,
-            "RELAYER_API_KEY_ADDRESS": self._wallet_address,
+            "POLY_RELAYER_API_KEY": relayer_key,
+            "POLY_RELAYER_API_KEY_ADDRESS": proxy_wallet,
             "Content-Type": "application/json",
         }
         payload = {
             "conditionId": condition_id,
             "amounts": amounts,
         }
+        logger.info(
+            f"Redeem attempt: condition={condition_id[:16]}... "
+            f"amounts={amounts} proxy={proxy_wallet[:10]}..."
+        )
         try:
             resp = await self._http.post(
                 "https://relayer.polymarket.com/redeem",
                 json=payload,
                 headers=headers,
             )
+            body = resp.text[:300]
             if resp.status_code in (200, 201, 202):
-                logger.info(f"Redeem submitted via Relayer: condition={condition_id[:16]}... resp={resp.json()}")
+                logger.info(f"Redeem accepted by Relayer: {body}")
                 return True
+            elif resp.status_code == 404:
+                logger.warning(f"Relayer returned 404 — wrong endpoint or already redeemed: {body}")
+                return False
             else:
-                logger.warning(f"Relayer redeem HTTP {resp.status_code}: {resp.text[:200]}")
-                return True  # Auto-credited anyway
+                logger.error(f"Relayer redeem HTTP {resp.status_code}: {body}")
+                return False
         except Exception as e:
-            logger.warning(f"Relayer redeem failed (auto-credit will apply): {e}")
-            return True
+            logger.error(f"Relayer redeem exception: {e}")
+            return False
 
     async def close(self):
         if self._http:

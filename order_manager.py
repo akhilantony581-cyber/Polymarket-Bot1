@@ -258,6 +258,14 @@ class OrderManager:
     async def _attempt_redeem(self, pos: ManagedPosition):
         shares = pos.order.filled_size
         if shares <= 0:
+            logger.warning(f"_attempt_redeem: position {pos.order.order_id[:16]} has 0 shares")
+            return
+
+        if not pos.market.condition_id:
+            logger.error(
+                f"_attempt_redeem: no condition_id for market {pos.market.market_id[:16]} "
+                f"— cannot redeem. Redeem manually on polymarket.com"
+            )
             return
 
         # Determine yes/no amounts based on which token was bought
@@ -265,14 +273,27 @@ class OrderManager:
         yes_amount = int(shares * 1e6) if is_yes else 0
         no_amount  = int(shares * 1e6) if not is_yes else 0
 
+        logger.info(
+            f"Attempting redeem for {pos.order.order_id[:16]} "
+            f"shares={shares:.4f} is_yes={is_yes} "
+            f"condition={pos.market.condition_id[:16]}..."
+        )
+
         success = await self.execution.redeem_position(
             condition_id=pos.market.condition_id,
             amounts=[yes_amount, no_amount],
         )
-        proceeds = shares * 1.0
-        pos.mark_redeemed(proceeds)
-        if self.on_redeem:
-            self.on_redeem(pos)
+
+        if success:
+            proceeds = shares * 1.0
+            pos.mark_redeemed(proceeds)
+            if self.on_redeem:
+                self.on_redeem(pos)
+        else:
+            logger.warning(
+                f"Redeem failed for {pos.order.order_id[:16]} "
+                f"— will retry next cycle. Redeem manually on polymarket.com if needed."
+            )
 
     # ------------------------------------------------------------------
     # MANUAL EXIT (dashboard/Telegram command)
