@@ -37,7 +37,7 @@ standard:
 # --- Sniper Mode ---
 sniper:
   time_to_expiry_threshold: 60     # Seconds remaining to trigger sniper mode
-  order_timeout_seconds: 5
+  order_timeout_seconds: 55
   reprice_interval_seconds: 3
   oracle_strike_buffer: 0.003      # Abort if oracle within 0.3% of strike
   stability_check_seconds: 5
