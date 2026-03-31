@@ -1,17 +1,11 @@
 """
 execution_engine.py
 Handles order placement, cancellation, and redemption
-via direct Polymarket CLOB REST API calls.
-Uses httpx + eth_account directly — no py-clob-client dependency.
+via Polymarket CLOB — uses py-clob-client for signing/auth.
 """
 
-import base64
-import hashlib
-import hmac
-import json
 import logging
 import os
-import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -19,13 +13,12 @@ from typing import Optional
 
 import httpx
 from eth_account import Account
-from eth_account.messages import encode_structured_data
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
 
 logger = logging.getLogger(__name__)
 
 CLOB_BASE = "https://clob.polymarket.com"
-# Polymarket CTF Exchange contract on Polygon mainnet
-EXCHANGE_ADDRESS = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
 CHAIN_ID = 137
 
 
@@ -67,10 +60,7 @@ class PlacedOrder:
 
 
 class ExecutionEngine:
-    """
-    Direct Polymarket CLOB REST API client.
-    Handles EIP-712 order signing and L2 HMAC authentication.
-    """
+    """Polymarket CLOB order execution via py-clob-client."""
 
     def __init__(self, config: dict):
         self.config = config
@@ -78,111 +68,40 @@ class ExecutionEngine:
         self._api_key = os.environ.get("POLYMARKET_API_KEY", "")
         self._api_secret = os.environ.get("POLYMARKET_API_SECRET", "")
         self._api_passphrase = os.environ.get("POLYMARKET_API_PASSPHRASE", "")
-        self._account = None
         self._wallet_address = ""
-        # Optional HTTP proxy for geo-restricted regions (set PROXY_URL env var)
-        # e.g. PROXY_URL=http://user:pass@proxy.example.com:8080
-        proxy_url = os.environ.get("PROXY_URL", "")
-        if proxy_url:
-            self._http = httpx.AsyncClient(timeout=10.0, proxy=proxy_url)
-            logger.info(f"ExecutionEngine using proxy: {proxy_url[:30]}...")
-        else:
-            self._http = httpx.AsyncClient(timeout=10.0)
-        self._init_account()
+        self._clob: Optional[ClobClient] = None
 
-    def _init_account(self):
+        proxy_url = os.environ.get("PROXY_URL", "")
+        self._http = httpx.AsyncClient(
+            timeout=10.0,
+            proxy=proxy_url if proxy_url else None,
+        )
+        if proxy_url:
+            logger.info(f"ExecutionEngine using proxy: {proxy_url[:30]}...")
+
+        self._init_client()
+
+    def _init_client(self):
         if not self._private_key:
             logger.warning("POLYMARKET_PRIVATE_KEY not set — order placement disabled")
             return
         try:
-            self._account = Account.from_key(self._private_key)
-            self._wallet_address = self._account.address
+            account = Account.from_key(self._private_key)
+            self._wallet_address = account.address
+            creds = ApiCreds(
+                api_key=self._api_key,
+                api_secret=self._api_secret,
+                api_passphrase=self._api_passphrase,
+            )
+            self._clob = ClobClient(
+                CLOB_BASE,
+                key=self._private_key,
+                chain_id=CHAIN_ID,
+                creds=creds,
+            )
             logger.info(f"ExecutionEngine ready. Wallet: {self._wallet_address}")
         except Exception as e:
             logger.error(f"Account init failed: {e}")
-
-    # ------------------------------------------------------------------
-    # L2 HMAC Authentication
-    # ------------------------------------------------------------------
-    def _l2_headers(self, method: str, path: str, body: str = "") -> dict:
-        timestamp = str(int(time.time()))
-        message = timestamp + method.upper() + path + body
-        raw_sig = hmac.new(
-            base64.b64decode(self._api_secret),
-            message.encode("utf-8"),
-            digestmod=hashlib.sha256,
-        ).digest()
-        signature = base64.b64encode(raw_sig).decode("utf-8")
-        return {
-            "POLY-ADDRESS": self._wallet_address,
-            "POLY-SIGNATURE": signature,
-            "POLY-TIMESTAMP": timestamp,
-            "POLY-API-KEY": self._api_key,
-            "POLY-PASSPHRASE": self._api_passphrase,
-        }
-
-    # ------------------------------------------------------------------
-    # EIP-712 Order Signing
-    # ------------------------------------------------------------------
-    def _sign_order(self, order_struct: dict) -> str:
-        domain = {
-            "name": "Polymarket CTF Exchange",
-            "version": "1",
-            "chainId": CHAIN_ID,
-            "verifyingContract": EXCHANGE_ADDRESS,
-        }
-        order_types = {
-            "Order": [
-                {"name": "salt",          "type": "uint256"},
-                {"name": "maker",         "type": "address"},
-                {"name": "signer",        "type": "address"},
-                {"name": "taker",         "type": "address"},
-                {"name": "tokenId",       "type": "uint256"},
-                {"name": "makerAmount",   "type": "uint256"},
-                {"name": "takerAmount",   "type": "uint256"},
-                {"name": "expiration",    "type": "uint256"},
-                {"name": "nonce",         "type": "uint256"},
-                {"name": "feeRateBps",    "type": "uint256"},
-                {"name": "side",          "type": "uint8"},
-                {"name": "signatureType", "type": "uint8"},
-            ]
-        }
-        # encode_structured_data is the stable EIP-712 API across all eth_account versions
-        structured = {
-            "types": {
-                "EIP712Domain": [
-                    {"name": "name",              "type": "string"},
-                    {"name": "version",           "type": "string"},
-                    {"name": "chainId",           "type": "uint256"},
-                    {"name": "verifyingContract", "type": "address"},
-                ],
-                "Order": order_types["Order"],
-            },
-            "domain": domain,
-            "primaryType": "Order",
-            "message": order_struct,
-        }
-        msg = encode_structured_data(structured)
-        signed = self._account.sign_message(msg)
-        return signed.signature.hex()
-
-    def _build_order_struct(
-        self, token_id: str, maker_amount: int, taker_amount: int, side: int
-    ) -> dict:
-        return {
-            "salt":          random.randint(1, 2**128),
-            "maker":         self._wallet_address,
-            "signer":        self._wallet_address,
-            "taker":         "0x0000000000000000000000000000000000000000",
-            "tokenId":       int(token_id),
-            "makerAmount":   maker_amount,
-            "takerAmount":   taker_amount,
-            "expiration":    0,
-            "nonce":         0,
-            "feeRateBps":    0,
-            "side":          side,
-            "signatureType": 0,  # EOA
-        }
 
     # ------------------------------------------------------------------
     # PLACE LIMIT ORDER (BUY)
@@ -195,41 +114,26 @@ class ExecutionEngine:
         size: float,
         mode: str = "standard",
     ) -> Optional[PlacedOrder]:
-        # Only enforce the hard floor for automated modes, not manual trades
         if mode != "manual" and price < self.config.get("price", {}).get("min_entry", 0.98):
             logger.warning(f"Rejected: price {price} below hard floor")
             return None
-        if not self._account:
-            logger.error("No account — order placement disabled")
+        if not self._clob:
+            logger.error("No CLOB client — order placement disabled")
             return None
 
-        shares = round(size / price, 6)
-        maker_amount = int(size * 1e6)       # USDC (6 decimals)
-        taker_amount = int(shares * 1e6)     # YES tokens
-
-        order_struct = self._build_order_struct(
-            token_id, maker_amount, taker_amount, side=0
-        )
-        signature = self._sign_order(order_struct)
-
-        payload = {
-            "order": {**order_struct, "signature": signature},
-            "owner": self._wallet_address,
-            "orderType": "GTC",
-        }
-        body_str = json.dumps(payload)
-        headers = self._l2_headers("POST", "/order", body_str)
-        headers["Content-Type"] = "application/json"
-
         try:
-            resp = await self._http.post(
-                f"{CLOB_BASE}/order", content=body_str, headers=headers
+            shares = round(size / price, 6)
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=shares,
+                side="BUY",
             )
-            resp.raise_for_status()
-            data = resp.json()
-            order_id = data.get("orderID") or data.get("order_id", "")
+            signed_order = self._clob.create_order(order_args)
+            resp = self._clob.post_order(signed_order, OrderType.GTC)
+            order_id = resp.get("orderID") or resp.get("order_id", "")
             if not order_id:
-                logger.warning(f"No order ID in response: {data}")
+                logger.warning(f"No order ID in response: {resp}")
                 return None
 
             order = PlacedOrder(
@@ -247,32 +151,19 @@ class ExecutionEngine:
             )
             return order
         except Exception as e:
-            resp_text = ""
-            try:
-                resp_text = e.response.text[:300] if hasattr(e, 'response') else ""
-            except Exception:
-                pass
-            logger.error(f"Order placement failed: {e} {resp_text}")
+            logger.error(f"Order placement failed: {e}")
             return None
 
     # ------------------------------------------------------------------
     # CANCEL ORDER
     # ------------------------------------------------------------------
     async def cancel_order(self, order: PlacedOrder) -> bool:
-        if not self._account:
+        if not self._clob:
             return False
         if not order.is_active:
             return True
-
-        body_str = json.dumps({"orderID": order.order_id})
-        headers = self._l2_headers("DELETE", "/order", body_str)
-        headers["Content-Type"] = "application/json"
-
         try:
-            resp = await self._http.delete(
-                f"{CLOB_BASE}/order", content=body_str, headers=headers
-            )
-            resp.raise_for_status()
+            self._clob.cancel(order.order_id)
             order.status = OrderStatus.CANCELLED
             order.last_updated = time.time()
             logger.info(f"Order cancelled: {order.order_id}")
@@ -291,31 +182,18 @@ class ExecutionEngine:
         size: float,
         exit_price: float,
     ) -> Optional[PlacedOrder]:
-        if not self._account:
+        if not self._clob:
             return None
-
-        maker_amount = int(size * 1e6)
-        taker_amount = int(size * exit_price * 1e6)
-        order_struct = self._build_order_struct(
-            token_id, maker_amount, taker_amount, side=1
-        )
-        signature = self._sign_order(order_struct)
-        payload = {
-            "order": {**order_struct, "signature": signature},
-            "owner": self._wallet_address,
-            "orderType": "GTC",
-        }
-        body_str = json.dumps(payload)
-        headers = self._l2_headers("POST", "/order", body_str)
-        headers["Content-Type"] = "application/json"
-
         try:
-            resp = await self._http.post(
-                f"{CLOB_BASE}/order", content=body_str, headers=headers
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=exit_price,
+                size=size,
+                side="SELL",
             )
-            resp.raise_for_status()
-            data = resp.json()
-            order_id = data.get("orderID", "")
+            signed_order = self._clob.create_order(order_args)
+            resp = self._clob.post_order(signed_order, OrderType.GTC)
+            order_id = resp.get("orderID", "")
             if not order_id:
                 return None
             order = PlacedOrder(
@@ -360,12 +238,10 @@ class ExecutionEngine:
     # ORDER STATUS
     # ------------------------------------------------------------------
     async def get_order_status(self, order: PlacedOrder) -> OrderStatus:
+        if not self._clob:
+            return order.status
         try:
-            path = f"/order/{order.order_id}"
-            headers = self._l2_headers("GET", path)
-            resp = await self._http.get(f"{CLOB_BASE}{path}", headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+            data = self._clob.get_order(order.order_id)
             filled = float(data.get("size_matched", 0))
             order.filled_size = filled
             order.last_updated = time.time()
@@ -379,16 +255,6 @@ class ExecutionEngine:
         except Exception as e:
             logger.debug(f"Status check failed: {e}")
             return order.status
-
-    # ------------------------------------------------------------------
-    # REDEEM
-    # ------------------------------------------------------------------
-    async def redeem_position(self, condition_id: str, amounts: list) -> bool:
-        logger.info(
-            f"Redeem queued: condition={condition_id} amounts={amounts}. "
-            "On-chain redemption executes via Polygon contract call."
-        )
-        return True
 
     # ------------------------------------------------------------------
     # BEST ASK
@@ -405,6 +271,16 @@ class ExecutionEngine:
         except Exception:
             pass
         return None
+
+    # ------------------------------------------------------------------
+    # REDEEM
+    # ------------------------------------------------------------------
+    async def redeem_position(self, condition_id: str, amounts: list) -> bool:
+        logger.info(
+            f"Redeem queued: condition={condition_id} amounts={amounts}. "
+            "On-chain redemption executes via Polygon contract call."
+        )
+        return True
 
     async def close(self):
         if self._http:
