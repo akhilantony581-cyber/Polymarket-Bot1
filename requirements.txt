@@ -7,4 +7,3 @@ pyyaml==6.0.1
 python-dotenv==1.0.1
 py-clob-client==0.28.0
 anthropic>=0.40.0
-web3>=6.0.0
