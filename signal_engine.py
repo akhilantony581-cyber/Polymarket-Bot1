@@ -102,19 +102,19 @@ class SignalEngine:
         self._load_config()
 
     def evaluate(self, market: PolymarketMarket) -> SignalResult:
-        yes_price = market.yes_price
         coin = market.coin
         tte = market.seconds_to_expiry
+        side, trade_price = market.best_trade_side
 
-        # Hard floor check
-        if yes_price < self.min_entry:
+        # Hard floor check — use best side price (UP or DOWN)
+        if trade_price < self.min_entry:
             return self._reject(market, "below_min_price",
-                                f"YES price {yes_price:.4f} < {self.min_entry}")
+                                f"{side.upper()} price {trade_price:.4f} < {self.min_entry}")
 
-        # For Up/Down sniper (price>=0.99, tte<=40s): the market price IS the signal.
-        # Skip Binance requirement — at 0.99 with <40s left, trade immediately.
+        # Fast path for Up/Down sniper: at price>=sniper_min with <=tte threshold,
+        # the market has decided — no Binance data needed at all.
         is_updown = self._is_updown_market(market)
-        is_sniper_window = yes_price >= self.sniper_min and tte <= self.sniper_expiry_threshold
+        is_sniper_window = trade_price >= self.sniper_min and tte <= self.sniper_expiry_threshold
 
         if is_updown and is_sniper_window:
             return self._evaluate_updown_sniper(market)
@@ -128,36 +128,30 @@ class SignalEngine:
         # Route to correct mode
         if is_sniper_window:
             return self._evaluate_sniper(market, binance_data)
-        elif yes_price >= self.min_entry:
+        elif trade_price >= self.min_entry:
             return self._evaluate_standard(market, binance_data)
 
         return self._reject(market, "no_mode_match", "No mode criteria met")
 
     def _evaluate_updown_sniper(self, market: PolymarketMarket) -> SignalResult:
         """
-        Fast path for Up/Down markets in the sniper window (price>=0.99, tte<=40s).
-        The market price of 0.99+ is itself the signal — no Binance check needed.
+        Fast path for Up/Down markets in sniper window.
+        At 0.95+ with <60s left the market has decided — no Binance needed.
         """
         tte = market.seconds_to_expiry
-        ob = market.order_book
-        # Only block if there's a clear sell wall (strong order book signal)
-        if ob.bids or ob.asks:
-            best_bid = ob.best_bid()
-            if best_bid and best_bid < market.yes_price - 0.015:
-                return self._reject(market, "yes_price_falling",
-                                    f"Best bid {best_bid:.4f} well below YES price — price dropping")
+        side, trade_price = market.best_trade_side
 
         return SignalResult(
             market_id=market.market_id,
             coin=market.coin,
             timeframe=market.timeframe,
-            yes_price=market.yes_price,
+            yes_price=trade_price,
             strike=market.strike,
             binance_price=0.0,
             reversal_score=1.0,
             mode=TradeMode.SNIPER,
             kelly_fraction=self._kelly_fraction(99),
-            reason=f"updown_sniper: price={market.yes_price:.4f} tte={tte:.0f}s",
+            reason=f"updown_sniper: {side.upper()}={trade_price:.4f} tte={tte:.0f}s",
             timestamp=time.time(),
         )
 
