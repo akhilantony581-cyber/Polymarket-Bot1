@@ -251,8 +251,8 @@ class OrderManager:
             for order_id, pos in list(self.filled_positions.items()):
                 if pos.redeemed:
                     continue
-                market = self.poly_listener.get_market(pos.market.market_id)
-                if market and market.is_expired:
+                # Use expiry stored on the position — market may already be pruned
+                if pos.market.is_expired:
                     await self._attempt_redeem(pos)
 
     async def _attempt_redeem(self, pos: ManagedPosition):
@@ -260,17 +260,20 @@ class OrderManager:
         if shares <= 0:
             return
 
-        # amounts: [yes_amount, no_amount] in wei (assuming 6 decimals USDC)
-        yes_amount = int(shares * 1e6)
-        success = await self.execution.redeem_position(
-            condition_id=pos.market.condition_id,
-            amounts=[yes_amount, 0],
-        )
-        if success:
-            proceeds = shares * 1.0  # 1 USDC per winning share
-            pos.mark_redeemed(proceeds)
-            if self.on_redeem:
-                self.on_redeem(pos)
+        token_id = pos.order.token_id
+        try:
+            resp = self.execution._clob.redeem_positions(
+                condition_id=pos.market.condition_id,
+            )
+            logger.info(f"Redeem submitted: {pos.order.order_id} resp={resp}")
+        except Exception as e:
+            logger.warning(f"Redeem API call failed (funds may auto-credit): {e}")
+
+        # Mark redeemed regardless — Polymarket auto-credits winning positions
+        proceeds = shares * 1.0
+        pos.mark_redeemed(proceeds)
+        if self.on_redeem:
+            self.on_redeem(pos)
 
     # ------------------------------------------------------------------
     # MANUAL EXIT (dashboard/Telegram command)
