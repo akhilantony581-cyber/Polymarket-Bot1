@@ -281,7 +281,8 @@ class ExecutionEngine:
         return None
 
     # ------------------------------------------------------------------
-    # REDEEM via Polymarket Relayer API (gasless)
+    # REDEEM via Polymarket Relayer v2 (gasless Safe transaction)
+    # Docs: https://docs.polymarket.com/developers/builders/relayer-client
     # ------------------------------------------------------------------
     async def redeem_position(self, condition_id: str, amounts: list) -> bool:
         if not condition_id:
@@ -289,44 +290,114 @@ class ExecutionEngine:
             return False
 
         relayer_key = os.environ.get("POLYMARKET_RELAYER_API_KEY", "")
+        proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
+        rpc_url = os.environ.get("POLYGON_RPC_URL", "https://polygon-rpc.com")
+
         if not relayer_key:
             logger.warning("POLYMARKET_RELAYER_API_KEY not set — cannot auto-redeem. Redeem manually on polymarket.com")
             return False
+        if not proxy_wallet:
+            logger.warning("POLYMARKET_PROXY_WALLET not set — cannot auto-redeem")
+            return False
 
-        # Use proxy wallet address for the header (associated with the relayer API key)
-        proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", self._wallet_address)
-
-        headers = {
-            "POLY_RELAYER_API_KEY": relayer_key,
-            "POLY_RELAYER_API_KEY_ADDRESS": proxy_wallet,
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "conditionId": condition_id,
-            "amounts": amounts,
-        }
-        logger.info(
-            f"Redeem attempt: condition={condition_id[:16]}... "
-            f"amounts={amounts} proxy={proxy_wallet[:10]}..."
-        )
         try:
-            resp = await self._http.post(
-                "https://relayer.polymarket.com/redeem",
-                json=payload,
-                headers=headers,
+            from web3 import Web3
+            from eth_abi import encode as abi_encode
+            from eth_keys import keys as eth_keys
+
+            w3 = Web3()
+            CTF      = Web3.to_checksum_address("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
+            USDC_E   = Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+            ZERO_ADDR = "0x0000000000000000000000000000000000000000"
+            safe_addr = Web3.to_checksum_address(proxy_wallet)
+
+            # ── 1. Encode redeemPositions(collateral, parentCollectionId, conditionId, indexSets)
+            cid_bytes = bytes.fromhex(condition_id.replace("0x", "").zfill(64))
+            fn_selector = w3.keccak(text="redeemPositions(address,bytes32,bytes32,uint256[])")[:4]
+            calldata = fn_selector + abi_encode(
+                ["address", "bytes32", "bytes32", "uint256[]"],
+                [USDC_E, b"\x00" * 32, cid_bytes, [1, 2]],
             )
-            body = resp.text[:300]
+
+            # ── 2. Fetch Safe nonce via RPC (nonce() selector = 0xaffed0e0)
+            nonce_resp = await self._http.post(rpc_url, json={
+                "jsonrpc": "2.0", "method": "eth_call",
+                "params": [{"to": safe_addr, "data": "0xaffed0e0"}, "latest"],
+                "id": 1,
+            }, timeout=5.0)
+            safe_nonce = int(nonce_resp.json().get("result", "0x0"), 16)
+
+            # ── 3. Build EIP-712 Safe transaction digest
+            # Safe v1.3.0 domain includes chainId
+            domain_typehash = w3.keccak(text="EIP712Domain(uint256 chainId,address verifyingContract)")
+            domain_separator = w3.keccak(
+                abi_encode(["bytes32", "uint256", "address"], [domain_typehash, 137, safe_addr])
+            )
+
+            safe_tx_typehash = w3.keccak(
+                text="SafeTx(address to,uint256 value,bytes data,uint8 operation,"
+                     "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,"
+                     "address gasToken,address refundReceiver,uint256 nonce)"
+            )
+            safe_tx_hash = w3.keccak(abi_encode(
+                ["bytes32", "address", "uint256", "bytes32", "uint8",
+                 "uint256", "uint256", "uint256", "address", "address", "uint256"],
+                [safe_tx_typehash, CTF, 0, w3.keccak(calldata),
+                 0, 0, 0, 0, ZERO_ADDR, ZERO_ADDR, safe_nonce],
+            ))
+
+            # 0x1901 || domainSeparator || safeTxHash
+            digest = w3.keccak(b"\x19\x01" + domain_separator + safe_tx_hash)
+
+            # ── 4. Sign the raw digest (no Ethereum prefix — EIP-712 already encoded it)
+            pk = eth_keys.PrivateKey(bytes.fromhex(self._private_key.replace("0x", "")))
+            sig = pk.sign_msg_hash(bytes(digest))
+            v = sig.v + 27  # Gnosis Safe expects v=27 or v=28
+            signature = "0x" + sig.r.to_bytes(32, "big").hex() + sig.s.to_bytes(32, "big").hex() + bytes([v]).hex()
+
+            # ── 5. Submit to Relayer v2
+            account = Account.from_key(self._private_key)
+            payload = {
+                "from":        account.address,
+                "to":          CTF,
+                "proxyWallet": safe_addr,
+                "data":        "0x" + calldata.hex(),
+                "nonce":       str(safe_nonce),
+                "signature":   signature,
+                "type":        "PROXY",
+                "signatureParams": {
+                    "gasPrice":       "0",
+                    "operation":      "0",
+                    "safeTxnGas":     "0",
+                    "baseGas":        "0",
+                    "gasToken":       ZERO_ADDR,
+                    "refundReceiver": ZERO_ADDR,
+                },
+            }
+            logger.info(
+                f"Redeem submit: condition={condition_id[:16]}... "
+                f"nonce={safe_nonce} safe={safe_addr[:10]}..."
+            )
+            resp = await self._http.post(
+                "https://relayer-v2.polymarket.com/submit",
+                json=payload,
+                headers={
+                    "RELAYER_API_KEY":         relayer_key,
+                    "RELAYER_API_KEY_ADDRESS":  safe_addr,
+                    "Content-Type":             "application/json",
+                },
+                timeout=15.0,
+            )
+            body = resp.text[:400]
             if resp.status_code in (200, 201, 202):
-                logger.info(f"Redeem accepted by Relayer: {body}")
+                logger.info(f"Redeem accepted by Relayer v2: {body}")
                 return True
-            elif resp.status_code == 404:
-                logger.warning(f"Relayer returned 404 — wrong endpoint or already redeemed: {body}")
-                return False
             else:
-                logger.error(f"Relayer redeem HTTP {resp.status_code}: {body}")
+                logger.error(f"Relayer v2 HTTP {resp.status_code}: {body}")
                 return False
+
         except Exception as e:
-            logger.error(f"Relayer redeem exception: {e}")
+            logger.error(f"Relayer redeem exception: {e}", exc_info=True)
             return False
 
     async def close(self):
