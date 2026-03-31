@@ -85,6 +85,11 @@ class ExecutionEngine:
         if not self._private_key:
             logger.warning("POLYMARKET_PRIVATE_KEY not set — order placement disabled")
             return
+        # py-clob-client uses requests internally — set proxy via env vars
+        proxy_url = os.environ.get("PROXY_URL", "")
+        if proxy_url:
+            os.environ.setdefault("HTTP_PROXY", proxy_url)
+            os.environ.setdefault("HTTPS_PROXY", proxy_url)
         try:
             account = Account.from_key(self._private_key)
             self._wallet_address = account.address
