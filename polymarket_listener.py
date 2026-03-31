@@ -471,7 +471,7 @@ class PolymarketListener:
             if m.is_expired:
                 continue
             _, price = m.best_trade_side
-            if 0.98 <= price < 1.0:
+            if 0.99 <= price < 1.0:
                 result.append(m)
         return result
 

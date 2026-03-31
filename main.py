@@ -117,62 +117,44 @@ class TradingBot:
     # MAIN TRADING LOOP
     # ------------------------------------------------------------------
     async def _trading_loop(self):
-        scan_interval = 2.0  # seconds between market scans
-
         while self._running:
             try:
                 await self._scan_markets()
             except Exception as e:
                 logger.error(f"Trading loop error: {e}", exc_info=True)
-            await asyncio.sleep(scan_interval)
+            await asyncio.sleep(1.0)
 
     async def _scan_markets(self):
-        active_markets = self.poly_listener.get_active_markets()
-        total_tracked = len(self.poly_listener.markets)
-        logger.info(
-            f"Scan: {total_tracked} markets tracked, "
-            f"{len(active_markets)} qualify (best side>=0.94, not expired)"
-        )
-        if not active_markets:
-            return
+        sniper_size = self.config["capital"]["total"] * 0.10  # 10% per trade
 
-        for market in active_markets:
-            # Check risk permission before evaluating signal
-            can, reason = self.risk_manager.can_trade(
-                self.order_manager.active_count
-            )
-            if not can:
-                logger.info(f"Risk manager blocked trade: {reason}")
-                break
+        for market in list(self.poly_listener.markets.values()):
+            if market.is_expired:
+                continue
 
-            # Skip if already have active order on this market
+            side, price = market.best_trade_side
+            if price < 0.99:
+                continue
+
             if self._market_has_active_order(market.market_id):
                 continue
 
-            # Evaluate signal
-            signal = self.signal_engine.evaluate(market)
-            self.structured_log.log_signal(signal)
+            can, reason = self.risk_manager.can_trade(self.order_manager.active_count)
+            if not can:
+                break
 
-            if not signal.is_tradeable():
-                logger.info(
-                    f"Signal REJECTED [{market.coin} {market.timeframe}] "
-                    f"price={market.yes_price:.4f} reason={signal.reason}"
-                )
-                continue
-
-            # Calculate position size
-            size = self.risk_manager.position_size(
-                signal, self.order_manager.active_count
+            logger.info(
+                f"SNIPER [{market.coin} {market.timeframe}] "
+                f"{side.upper()}@{price:.4f} size=${sniper_size:.2f}"
             )
-            if size <= 0:
-                logger.debug(f"Zero position size for {market.market_id}")
-                continue
 
-            # Place the trade
-            await self._execute_trade(market, signal, size)
-
-        # Evaluate maker opportunities separately
-        await self._scan_maker_opportunities(active_markets)
+            pos = await self.order_manager.submit(
+                market=market,
+                price=price,
+                usdc_size=sniper_size,
+                mode="sniper",
+            )
+            if pos:
+                self.risk_manager.record_trade_open(pos)
 
     async def _execute_trade(self, market, signal, size: float):
         mode = signal.mode.value
