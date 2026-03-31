@@ -117,12 +117,45 @@ class TradingBot:
     # MAIN TRADING LOOP
     # ------------------------------------------------------------------
     async def _trading_loop(self):
+        _diag_tick = 0
         while self._running:
             try:
                 await self._scan_markets()
+                _diag_tick += 1
+                if _diag_tick % 60 == 0:  # Log diagnostics every ~60 seconds
+                    await self._log_diagnostics()
             except Exception as e:
                 logger.error(f"Trading loop error: {e}", exc_info=True)
             await asyncio.sleep(1.0)
+
+    async def _log_diagnostics(self):
+        """Log top market prices and bot state every 60s to help diagnose missed trades."""
+        markets = list(self.poly_listener.markets.values())
+        if not markets:
+            logger.warning("DIAG: No markets in listener — listener may not be fetching data")
+            return
+
+        # Find the highest-priced token across all markets
+        top = sorted(
+            [(m.coin, m.timeframe, *m.best_trade_side, round(m.seconds_to_expiry, 0))
+             for m in markets if not m.is_expired],
+            key=lambda x: -x[2]  # sort by price descending (index 2 = 'yes'/'no', 3 = price)
+        )
+        # top[i] = (coin, timeframe, side, price, tte)
+        top5 = [(f"{c} {tf} {side.upper()}={price:.4f} tte={tte:.0f}s")
+                for c, tf, side, price, tte in top[:5]]
+
+        halted = self.risk_manager.is_halted
+        paused = self.risk_manager.is_paused
+        active = self.order_manager.active_count
+        can, reason = self.risk_manager.can_trade(active)
+
+        logger.info(
+            f"DIAG: {len(markets)} markets tracked | "
+            f"active_orders={active} | halted={halted} paused={paused} | "
+            f"can_trade={can} ({reason}) | "
+            f"top prices: {', '.join(top5) if top5 else 'none'}"
+        )
 
     async def _scan_markets(self):
         sniper_size = self.config["capital"]["total"] * 0.10  # 10% per trade

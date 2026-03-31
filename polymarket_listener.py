@@ -444,7 +444,7 @@ class PolymarketListener:
         """
         for market in list(self.markets.values()):
             tte = market.seconds_to_expiry
-            near_expiry = tte <= 180  # within 3 minutes
+            near_expiry = tte <= 600  # within 10 minutes — use live CLOB price, not lagged Gamma
 
             # For near-expiry markets: fetch live CLOB price for both tokens
             if near_expiry and market.yes_token_id and market.no_token_id:
