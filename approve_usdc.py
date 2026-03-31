@@ -17,7 +17,7 @@ except ImportError:
     print("[FAIL] Run: pip3 install web3")
     sys.exit(1)
 
-POLYGON_RPC = "https://rpc.ankr.com/polygon"
+POLYGON_RPC = "https://polygon.llamarpc.com"
 USDC_ADDRESS = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"  # USDC on Polygon
 CTF_EXCHANGE = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"  # Polymarket exchange
 
