@@ -20,8 +20,7 @@ import time
 import httpx
 from dotenv import load_dotenv
 from eth_account import Account
-from eth_keys import keys
-from eth_utils import keccak
+from eth_account.messages import encode_defunct
 
 load_dotenv()
 
@@ -29,11 +28,11 @@ CLOB_BASE = "https://clob.polymarket.com"
 
 
 def _l1_headers(account, method: str, path: str, body: str = "") -> dict:
-    """L1 auth: keccak-hash of timestamp+method+path+body, signed with private key."""
+    """L1 auth: sign timestamp+method+path+body with private key (EIP-191)."""
     timestamp = str(int(time.time()))
     message = timestamp + method.upper() + path + body
-    msg_hash = keccak(text=message)
-    signed = account.signHash(msg_hash)
+    msg = encode_defunct(text=message)
+    signed = account.sign_message(msg)
     return {
         "POLY-ADDRESS": account.address,
         "POLY-SIGNATURE": signed.signature.hex(),
