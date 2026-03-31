@@ -160,6 +160,7 @@ class TradingBot:
     async def _scan_markets(self):
         sniper_size = self.config["capital"]["total"] * 0.10  # 10% per trade
 
+        qualifying = []
         for market in list(self.poly_listener.markets.values()):
             if market.is_expired:
                 continue
@@ -179,15 +180,22 @@ class TradingBot:
             if self._market_has_active_order(market.market_id):
                 continue
 
-            can, reason = self.risk_manager.can_trade(self.order_manager.active_count)
+            can, reason = self.risk_manager.can_trade(self.order_manager.active_count + len(qualifying))
             if not can:
                 break
 
+            qualifying.append((market, side, price))
+
+        if not qualifying:
+            return
+
+        # Submit all qualifying orders in parallel — don't let one network
+        # call block the others while the 0.99 window closes.
+        async def _submit_one(market, side, price):
             logger.info(
                 f"SNIPER [{market.coin} {market.timeframe}] "
-                f"{side.upper()}@{price:.4f} size=${sniper_size:.2f}"
+                f"{side.upper()}@{price:.4f} size=${sniper_size:.2f} tte={market.seconds_to_expiry:.0f}s"
             )
-
             pos = await self.order_manager.submit(
                 market=market,
                 price=price,
@@ -196,6 +204,8 @@ class TradingBot:
             )
             if pos:
                 self.risk_manager.record_trade_open(pos)
+
+        await asyncio.gather(*[_submit_one(m, s, p) for m, s, p in qualifying])
 
     async def _execute_trade(self, market, signal, size: float):
         mode = signal.mode.value
