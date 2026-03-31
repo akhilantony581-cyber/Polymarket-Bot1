@@ -149,7 +149,14 @@ class OrderManager:
         order = pos.order
         market = pos.market
         mode = pos.mode
-        timeout = self._timeout_for_mode(mode)
+        # For sniper: timeout = min(config, seconds_to_expiry - 2) so order
+        # stays alive right up to market resolution without outlasting it.
+        base_timeout = self._timeout_for_mode(mode)
+        if mode == "sniper":
+            tte = market.seconds_to_expiry
+            timeout = min(base_timeout, max(tte - 2, 5))
+        else:
+            timeout = base_timeout
 
         logger.info(f"Monitoring order {order.order_id} mode={mode} timeout={timeout}s")
 

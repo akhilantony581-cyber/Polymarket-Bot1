@@ -156,7 +156,8 @@ class PolymarketListener:
         self._running = True
         self._client = httpx.AsyncClient(timeout=10.0)
         asyncio.create_task(self._poll_loop())
-        logger.info("PolymarketListener started")
+        asyncio.create_task(self._fast_poll_loop())
+        logger.info("PolymarketListener started (fast poll enabled)")
 
     async def stop(self):
         self._running = False
@@ -171,6 +172,23 @@ class PolymarketListener:
             except Exception as e:
                 logger.warning(f"PolymarketListener poll error: {e}")
             await asyncio.sleep(self.poll_interval)
+
+    async def _fast_poll_loop(self):
+        """
+        High-frequency CLOB price refresh (every 0.5s) for markets
+        within 5 minutes of expiry. This is the primary sniper feed.
+        """
+        while self._running:
+            try:
+                critical = [
+                    m for m in self.markets.values()
+                    if 0 < m.seconds_to_expiry <= 300 and m.yes_token_id and m.no_token_id
+                ]
+                if critical:
+                    await asyncio.gather(*[self._fetch_clob_prices_for_market(m) for m in critical])
+            except Exception as e:
+                logger.debug(f"Fast poll error: {e}")
+            await asyncio.sleep(0.5)
 
     def _current_epoch(self, tf_seconds: int) -> int:
         """Return the current epoch aligned to the timeframe boundary."""
@@ -436,36 +454,60 @@ class PolymarketListener:
                 logger.debug(f"Price refresh batch error: {e}")
             await asyncio.sleep(0.1)
 
+    async def _fetch_clob_prices_for_market(self, market: "PolymarketMarket"):
+        """Fetch live CLOB midpoints for both YES and NO tokens in parallel."""
+        async def get_mid(token_id: str) -> float:
+            try:
+                resp = await self._client.get(
+                    f"{self.CLOB_BASE}/midpoint",
+                    params={"token_id": token_id}
+                )
+                if resp.status_code == 200:
+                    return float(resp.json().get("mid", 0))
+            except Exception:
+                pass
+            return 0.0
+
+        yes_mid, no_mid = await asyncio.gather(
+            get_mid(market.yes_token_id),
+            get_mid(market.no_token_id),
+        )
+
+        # YES token midpoint
+        if yes_mid > 0:
+            market.yes_price = yes_mid
+            market.last_updated = time.time()
+
+        # NO token midpoint: if it's higher than inferred, use it directly
+        # by adjusting yes_price so that (1 - yes_price) = no_mid
+        if no_mid > 0 and no_mid > (1.0 - market.yes_price):
+            market.yes_price = round(1.0 - no_mid, 4)
+            market.last_updated = time.time()
+
+        logger.debug(
+            f"CLOB prices {market.coin} {market.timeframe}: "
+            f"YES={market.yes_price:.4f} NO={market.no_price:.4f} "
+            f"tte={market.seconds_to_expiry:.0f}s"
+        )
+
     async def _refresh_order_books(self):
         """
-        For markets within 3 minutes of expiry: fetch live CLOB mid-price
-        to replace the lagged Gamma bestAsk. Also fetch order book depth.
-        For all others: fetch order book only if price >= 0.97.
+        For near-expiry markets: fetch CLOB midpoints for YES + NO in parallel.
+        For all others: only fetch order book if price >= 0.95.
+        Near-expiry markets are fetched concurrently for minimum latency.
         """
-        for market in list(self.markets.values()):
-            tte = market.seconds_to_expiry
-            near_expiry = tte <= 600  # within 10 minutes — use live CLOB price, not lagged Gamma
+        all_markets = list(self.markets.values())
+        near_expiry_markets = [m for m in all_markets if m.seconds_to_expiry <= 600 and m.yes_token_id and m.no_token_id]
+        other_markets = [m for m in all_markets if m.seconds_to_expiry > 600]
 
-            # For near-expiry markets: fetch live CLOB price for both tokens
-            if near_expiry and market.yes_token_id and market.no_token_id:
-                try:
-                    # Fetch mid-price for YES token
-                    resp = await self._client.get(
-                        f"{self.CLOB_BASE}/midpoint",
-                        params={"token_id": market.yes_token_id}
-                    )
-                    if resp.status_code == 200:
-                        mid = float(resp.json().get("mid", 0))
-                        if mid > 0:
-                            market.yes_price = mid
-                            market.last_updated = time.time()
-                            logger.debug(f"CLOB mid-price {market.coin} {market.timeframe}: {mid:.4f} tte={tte:.0f}s")
-                except Exception as e:
-                    logger.debug(f"CLOB price refresh error: {e}")
-                await asyncio.sleep(0.05)
+        # Fetch CLOB prices for ALL near-expiry markets simultaneously
+        if near_expiry_markets:
+            await asyncio.gather(*[self._fetch_clob_prices_for_market(m) for m in near_expiry_markets])
 
-            # Fetch order book for high-price markets
-            if market.yes_price < 0.95 and not near_expiry:
+        # Order books for high-price markets only
+        for market in all_markets:
+            _, price = market.best_trade_side
+            if price < 0.95:
                 continue
             try:
                 resp = await self._client.get(
@@ -487,7 +529,7 @@ class PolymarketListener:
                 )
             except Exception as e:
                 logger.debug(f"Order book refresh error for {market.market_id}: {e}")
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.02)
 
     def get_active_markets(self) -> List[PolymarketMarket]:
         """Return non-expired markets where best side (UP or DOWN) >= 0.94.
