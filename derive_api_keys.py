@@ -20,7 +20,8 @@ import time
 import httpx
 from dotenv import load_dotenv
 from eth_account import Account
-from eth_account.messages import encode_defunct
+from eth_keys import keys
+from eth_utils import keccak
 
 load_dotenv()
 
@@ -28,15 +29,14 @@ CLOB_BASE = "https://clob.polymarket.com"
 
 
 def _l1_headers(account, method: str, path: str, body: str = "") -> dict:
-    """L1 auth: signs timestamp+method+path+body with private key (EOA)."""
+    """L1 auth: keccak-hash of timestamp+method+path+body, signed with private key."""
     timestamp = str(int(time.time()))
     message = timestamp + method.upper() + path + body
-    msg = encode_defunct(text=message)
-    signed = account.sign_message(msg)
-    signature = signed.signature.hex()
+    msg_hash = keccak(text=message)
+    signed = account.signHash(msg_hash)
     return {
         "POLY-ADDRESS": account.address,
-        "POLY-SIGNATURE": signature,
+        "POLY-SIGNATURE": signed.signature.hex(),
         "POLY-TIMESTAMP": timestamp,
     }
 
@@ -57,31 +57,19 @@ async def main():
     )
 
     try:
-        # Try GET first — returns existing key if one exists
         path = "/auth/api-key"
-        headers = _l1_headers(account, "GET", path)
+
+        # POST creates (or re-derives) API credentials
+        print(f"\n[..] Deriving API key from {CLOB_BASE}{path} ...")
+        headers = _l1_headers(account, "POST", path)
         headers["Content-Type"] = "application/json"
+        resp = await client.post(f"{CLOB_BASE}{path}", headers=headers, json={"nonce": 0})
+        print(f"     Status: {resp.status_code}  Body: {resp.text[:300]}")
 
-        print(f"\n[..] Fetching existing API key from {CLOB_BASE}{path} ...")
-        resp = await client.get(f"{CLOB_BASE}{path}", headers=headers)
-        print(f"     Status: {resp.status_code}")
-
-        if resp.status_code == 200:
-            data = resp.json()
-        elif resp.status_code in (401, 404):
-            # No key yet — create one
-            print("[..] No existing key found. Creating new API key...")
-            headers = _l1_headers(account, "GET", path)
-            headers["Content-Type"] = "application/json"
-            resp2 = await client.post(f"{CLOB_BASE}{path}", headers=headers)
-            print(f"     Status: {resp2.status_code}  Body: {resp2.text[:300]}")
-            if resp2.status_code not in (200, 201):
-                print(f"[FAIL] Could not create API key: {resp2.text}")
-                sys.exit(1)
-            data = resp2.json()
-        else:
-            print(f"[FAIL] Unexpected response: {resp.status_code}  {resp.text[:300]}")
+        if resp.status_code not in (200, 201):
+            print(f"[FAIL] Could not derive API key: {resp.text}")
             sys.exit(1)
+        data = resp.json()
 
         api_key        = data.get("apiKey") or data.get("api_key", "")
         api_secret     = data.get("secret") or data.get("api_secret", "")
