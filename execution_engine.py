@@ -105,7 +105,7 @@ class ExecutionEngine:
                 chain_id=CHAIN_ID,
                 creds=creds,
                 funder=proxy_wallet if proxy_wallet else self._wallet_address,
-                signature_type=1 if proxy_wallet else 0,
+                signature_type=2 if proxy_wallet else 0,
             )
             logger.info(f"ExecutionEngine ready. Wallet: {self._wallet_address} Funder: {proxy_wallet or self._wallet_address}")
         except Exception as e:
