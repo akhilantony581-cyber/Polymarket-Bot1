@@ -76,12 +76,38 @@ class PolymarketMarket:
         return self.seconds_to_expiry <= 0
 
     @property
+    def no_price(self) -> float:
+        """Price of the DOWN token (complement of UP token)."""
+        return round(1.0 - self.yes_price, 4)
+
+    @property
+    def best_trade_side(self) -> tuple:
+        """Returns ('yes', price) or ('no', price) — whichever token is winning."""
+        if self.no_price > self.yes_price:
+            return ('no', self.no_price)
+        return ('yes', self.yes_price)
+
+    @property
+    def trade_token_id(self) -> str:
+        """Token ID to buy based on which side is winning."""
+        side, _ = self.best_trade_side
+        return self.no_token_id if side == 'no' else self.yes_token_id
+
+    @property
+    def trade_price(self) -> float:
+        """Price of the token we'd buy."""
+        _, price = self.best_trade_side
+        return price
+
+    @property
     def is_sniper_window(self) -> bool:
-        return self.seconds_to_expiry <= 40 and self.yes_price >= 0.99
+        _, price = self.best_trade_side
+        return self.seconds_to_expiry <= 60 and price >= 0.95
 
     @property
     def is_standard_window(self) -> bool:
-        return self.yes_price >= 0.98 and self.yes_price < 0.99
+        _, price = self.best_trade_side
+        return 0.94 <= price < 0.95
 
 
 class PolymarketListener:
@@ -438,12 +464,16 @@ class PolymarketListener:
             await asyncio.sleep(0.1)  # gentle rate limit
 
     def get_active_markets(self) -> List[PolymarketMarket]:
-        """Return non-expired markets with 0.98 <= YES price < 1.0.
-        Price=1.0 means already resolved (no profit possible)."""
-        return [
-            m for m in self.markets.values()
-            if not m.is_expired and 0.98 <= m.yes_price < 1.0
-        ]
+        """Return non-expired markets where best side (UP or DOWN) >= 0.94.
+        Checks both tokens — doubles opportunity detection."""
+        result = []
+        for m in self.markets.values():
+            if m.is_expired:
+                continue
+            _, price = m.best_trade_side
+            if 0.94 <= price < 1.0:
+                result.append(m)
+        return result
 
     def get_market(self, market_id: str) -> Optional[PolymarketMarket]:
         return self.markets.get(market_id)

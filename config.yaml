@@ -18,9 +18,9 @@ risk:
 
 # --- Price Rules ---
 price:
-  min_entry: 0.98                  # HARD FLOOR — never buy below this
-  standard_max: 0.989
-  sniper_min: 0.99
+  min_entry: 0.94                  # HARD FLOOR — never buy below this
+  standard_max: 0.979
+  sniper_min: 0.95
 
 # --- Signal Engine ---
 signal:
@@ -36,7 +36,7 @@ standard:
 
 # --- Sniper Mode ---
 sniper:
-  time_to_expiry_threshold: 40     # Seconds remaining to trigger sniper mode
+  time_to_expiry_threshold: 60     # Seconds remaining to trigger sniper mode
   order_timeout_seconds: 5
   reprice_interval_seconds: 3
   oracle_strike_buffer: 0.003      # Abort if oracle within 0.3% of strike

@@ -120,7 +120,7 @@ class OrderManager:
     ) -> Optional[ManagedPosition]:
 
         order = await self.execution.place_limit_order(
-            token_id=market.yes_token_id,
+            token_id=market.trade_token_id,
             market_id=market.market_id,
             price=price,
             size=usdc_size,

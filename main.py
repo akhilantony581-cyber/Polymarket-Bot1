@@ -131,7 +131,7 @@ class TradingBot:
         total_tracked = len(self.poly_listener.markets)
         logger.info(
             f"Scan: {total_tracked} markets tracked, "
-            f"{len(active_markets)} qualify (price>=0.98, not expired)"
+            f"{len(active_markets)} qualify (best side>=0.94, not expired)"
         )
         if not active_markets:
             return
@@ -178,9 +178,10 @@ class TradingBot:
         mode = signal.mode.value
         price = self._entry_price(market, signal)
 
+        side, _ = market.best_trade_side
         logger.info(
             f"Executing [{mode}] {market.coin} {market.timeframe} "
-            f"YES@{price:.4f} size=${size:.2f} score={signal.reversal_score:.1f}"
+            f"{side.upper()}@{price:.4f} size=${size:.2f} score={signal.reversal_score:.1f}"
         )
 
         pos = await self.order_manager.submit(
