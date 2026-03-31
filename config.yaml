@@ -5,7 +5,7 @@
 # --- Capital & Risk ---
 capital:
   total: 100.0
-  max_concurrent_trades: 2
+  max_concurrent_trades: 20
   maker_allocation_pct: 0.30       # 30% of capital reserved for maker orders
 
 risk:
