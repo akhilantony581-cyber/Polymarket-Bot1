@@ -132,6 +132,7 @@ class TradingBot:
                 continue
 
             side, price = market.best_trade_side
+            price = min(price, 0.99)  # CLOB max price is 0.99
             if price < 0.99:
                 continue
 
