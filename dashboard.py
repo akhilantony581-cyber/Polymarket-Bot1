@@ -204,7 +204,7 @@ DASHBOARD_HTML = """
     <h3>Price Settings</h3>
     <div class="control-row">
       <label>Min Entry Price</label>
-      <input type="range" min="0.97" max="0.995" step="0.001" id="minEntry" oninput="document.getElementById('minEntryVal').textContent=parseFloat(this.value).toFixed(3)">
+      <input type="range" min="0.90" max="0.999" step="0.001" id="minEntry" oninput="document.getElementById('minEntryVal').textContent=parseFloat(this.value).toFixed(3)">
       <span class="range-val" id="minEntryVal">0.980</span>
     </div>
     <div class="control-row">
@@ -328,6 +328,34 @@ DASHBOARD_HTML = """
       <thead><tr><th>Time</th><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>PnL</th><th>Result</th></tr></thead>
       <tbody id="recentTrades"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No trades yet</td></tr></tbody>
     </table>
+  </div>
+</div>
+
+<!-- Transaction Log -->
+<div class="section-pad">
+  <div class="card">
+    <h3>Transaction Log <span style="color:#8b949e;font-size:10px;font-weight:normal;margin-left:8px">All-time history</span>
+      <button onclick="loadTxLog()" style="float:right;background:#1f6feb;color:#fff;padding:4px 10px;border:none;border-radius:4px;cursor:pointer;font-size:11px">Refresh</button>
+    </h3>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr><th>Time</th><th>Coin</th><th>TF</th><th>Side</th><th>Mode</th><th>Entry</th><th>Size</th><th>PnL</th><th>Result</th></tr></thead>
+      <tbody id="txLog"><tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">Click Refresh to load</td></tr></tbody>
+    </table>
+    </div>
+    <div id="txStats" style="margin-top:10px;font-size:12px;color:#8b949e;display:flex;gap:24px"></div>
+  </div>
+</div>
+
+<!-- AI Trading Agent -->
+<div class="section-pad">
+  <div class="card">
+    <h3>AI Trading Agent
+      <button onclick="runAnalysis()" id="analyzeBtn" style="float:right;background:#6e40c9;color:#fff;padding:4px 14px;border:none;border-radius:4px;cursor:pointer;font-size:11px">Analyze Trades</button>
+    </h3>
+    <div id="aiStatus" style="color:#8b949e;font-size:12px;margin-bottom:8px">Click "Analyze Trades" to get AI insights on your trading performance.</div>
+    <div id="aiStats" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap"></div>
+    <div id="aiAnalysis" style="background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:12px;font-size:12px;line-height:1.6;white-space:pre-wrap;display:none;max-height:500px;overflow-y:auto"></div>
   </div>
 </div>
 
@@ -541,6 +569,76 @@ function updateLogs(logs) {
 
 // Poll state every 3s via HTTP as backup
 setInterval(() => fetch('/state').then(r=>r.json()).then(d=>updateState(d)), 3000);
+
+// Transaction Log
+async function loadTxLog() {
+  const tbody = document.getElementById('txLog');
+  tbody.innerHTML = '<tr><td colspan="9" style="color:#8b949e;text-align:center;padding:12px">Loading...</td></tr>';
+  const trades = await fetch('/trades/log').then(r=>r.json()).catch(()=>[]);
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">No trades recorded yet</td></tr>';
+    return;
+  }
+  const rev = [...trades].reverse();
+  tbody.innerHTML = rev.map(t => {
+    const pnl = t.pnl != null ? t.pnl : null;
+    const win = t.win;
+    const ts = t.timestamp ? new Date(t.timestamp*1000).toLocaleString() : '—';
+    return `<tr>
+      <td style="font-size:11px;white-space:nowrap">${ts}</td>
+      <td><b>${t.coin||'—'}</b></td>
+      <td>${t.timeframe||'—'}</td>
+      <td style="color:${(t.side||'yes')==='no'?'#f85149':'#3fb950'}">${(t.side||'YES').toUpperCase()}</td>
+      <td><span class="tag tag-${t.mode||'standard'}">${t.mode||'—'}</span></td>
+      <td>${t.entry_price!=null?t.entry_price.toFixed(4):'—'}</td>
+      <td>$${t.entry_usdc!=null?t.entry_usdc.toFixed(2):'—'}</td>
+      <td class="${pnl>=0?'win':'loss'}">${pnl!=null?(pnl>=0?'+':'')+pnl.toFixed(4):'—'}</td>
+      <td class="${win?'win':'loss'}">${win?'✓ WIN':'✗ LOSS'}</td>
+    </tr>`;
+  }).join('');
+  // Stats
+  const wins = trades.filter(t=>t.win).length;
+  const losses = trades.filter(t=>!t.win && t.pnl!=null).length;
+  const totalPnl = trades.reduce((s,t)=>s+(t.pnl||0),0);
+  const wr = trades.length ? Math.round(wins/trades.length*100) : 0;
+  document.getElementById('txStats').innerHTML = `
+    <span>Total: <b>${trades.length}</b></span>
+    <span class="win">Wins: <b>${wins}</b></span>
+    <span class="loss">Losses: <b>${losses}</b></span>
+    <span>Win Rate: <b>${wr}%</b></span>
+    <span class="${totalPnl>=0?'win':'loss'}">Total PnL: <b>${totalPnl>=0?'+':''}$${totalPnl.toFixed(4)}</b></span>
+  `;
+}
+
+// AI Analysis
+async function runAnalysis() {
+  const btn = document.getElementById('analyzeBtn');
+  const status = document.getElementById('aiStatus');
+  const box = document.getElementById('aiAnalysis');
+  btn.disabled = true; btn.textContent = 'Analyzing...';
+  status.textContent = 'Running AI analysis... this may take 10-20 seconds';
+  box.style.display = 'none';
+  try {
+    const res = await fetch('/analyze', {method:'POST'}).then(r=>r.json());
+    if (res.analysis) {
+      box.textContent = res.analysis;
+      box.style.display = 'block';
+      status.textContent = 'Analysis complete';
+      if (res.stats) {
+        document.getElementById('aiStats').innerHTML = `
+          <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 10px">Trades: <b>${res.stats.total_trades}</b></span>
+          <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 10px" class="win">Wins: <b>${res.stats.wins}</b></span>
+          <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 10px" class="loss">Losses: <b>${res.stats.losses}</b></span>
+          <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 10px">Win Rate: <b>${res.stats.win_rate_pct}%</b></span>
+          <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 10px" class="${res.stats.total_pnl_usdc>=0?'win':'loss'}">PnL: <b>${res.stats.total_pnl_usdc>=0?'+':''}$${res.stats.total_pnl_usdc}</b></span>
+        `;
+      }
+    }
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+  btn.disabled = false; btn.textContent = 'Analyze Trades';
+}
 </script>
 </body>
 </html>
@@ -676,8 +774,8 @@ async def reset_halt():
 
 @app.post("/settings/price")
 async def update_price(data: PriceRangeUpdate):
-    if data.min_entry < 0.97:
-        raise HTTPException(400, "min_entry cannot be below 0.97")
+    if data.min_entry < 0.90:
+        raise HTTPException(400, "min_entry cannot be below 0.90")
     config = load_config()
     config["price"]["min_entry"] = round(data.min_entry, 4)
     config["price"]["sniper_min"] = round(data.sniper_min, 4)
@@ -747,6 +845,85 @@ async def manual_trade(data: ManualTradeRequest):
         return {"message": f"Manual {data.direction.upper()} order placed for {data.coin} {data.timeframe} @ {data.price} size=${data.size} | order_id={order.order_id}"}
 
     raise HTTPException(500, f"Order placement failed — check Railway logs for details (API key, balance, or signing error)")
+
+
+TRADE_LOG_PATH = Path("logs/trades.jsonl")
+
+
+def read_trade_log(limit: int = 200) -> list:
+    if not TRADE_LOG_PATH.exists():
+        return []
+    trades = []
+    try:
+        with open(TRADE_LOG_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        trades.append(json.loads(line))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return trades[-limit:]
+
+
+@app.get("/trades/log")
+async def get_trade_log():
+    return read_trade_log(200)
+
+
+@app.post("/analyze")
+async def analyze_trades():
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(503, "ANTHROPIC_API_KEY not set in Railway env vars")
+    trades = read_trade_log(100)
+    if not trades:
+        return {"analysis": "No trade history yet. The AI agent will analyze your trades once you have some completed."}
+    try:
+        import anthropic as _anthropic
+        client = _anthropic.Anthropic(api_key=api_key)
+
+        wins   = [t for t in trades if t.get("win")]
+        losses = [t for t in trades if not t.get("win") and t.get("pnl") is not None]
+        total_pnl = sum(t.get("pnl", 0) or 0 for t in trades)
+        win_rate  = round(len(wins) / len(trades) * 100, 1) if trades else 0
+
+        summary = {
+            "total_trades": len(trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate_pct": win_rate,
+            "total_pnl_usdc": round(total_pnl, 4),
+            "recent_trades": trades[-20:],
+        }
+
+        prompt = f"""You are an expert Polymarket trading analyst reviewing a sniper bot's performance.
+
+The bot trades Up/Down crypto markets (BTC, ETH, SOL, XRP) on 5-minute and 15-minute timeframes.
+It buys whichever token (UP or DOWN) is priced at 0.98+ — meaning the market has nearly decided.
+A winning trade resolves at 1.0 (profit = ~2%), a losing trade resolves at 0.0 (total loss).
+
+Performance summary:
+{json.dumps(summary, indent=2)}
+
+Please provide:
+1. **Key Learning Points** — what patterns do you see in wins vs losses?
+2. **Risk Assessment** — is the strategy sustainable? What are the main risks?
+3. **Specific Suggestions** — concrete parameter changes or strategy improvements
+4. **Market Timing** — which coins/timeframes perform best?
+
+Be concise and actionable. Format with clear headers."""
+
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return {"analysis": msg.content[0].text, "stats": summary}
+    except Exception as e:
+        raise HTTPException(500, f"Analysis failed: {e}")
 
 
 @app.post("/positions/exit")
