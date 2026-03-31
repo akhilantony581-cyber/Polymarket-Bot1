@@ -18,9 +18,9 @@ risk:
 
 # --- Price Rules ---
 price:
-  min_entry: 0.94                  # HARD FLOOR — never buy below this
+  min_entry: 0.98                  # HARD FLOOR — never buy below this
   standard_max: 0.979
-  sniper_min: 0.95
+  sniper_min: 0.98
 
 # --- Signal Engine ---
 signal:

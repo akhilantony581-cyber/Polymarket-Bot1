@@ -102,7 +102,7 @@ class PolymarketMarket:
     @property
     def is_sniper_window(self) -> bool:
         _, price = self.best_trade_side
-        return price >= 0.95
+        return price >= 0.98
 
     @property
     def is_standard_window(self) -> bool:
@@ -471,7 +471,7 @@ class PolymarketListener:
             if m.is_expired:
                 continue
             _, price = m.best_trade_side
-            if 0.94 <= price < 1.0:
+            if 0.98 <= price < 1.0:
                 result.append(m)
         return result
 
