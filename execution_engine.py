@@ -345,7 +345,8 @@ class ExecutionEngine:
                 "value":    0,
             }
             signed = Account.sign_transaction(tx, self._private_key)
-            raw_hex = "0x" + signed.rawTransaction.hex()
+            raw_tx = signed.raw_transaction if hasattr(signed, 'raw_transaction') else signed.rawTransaction
+            raw_hex = "0x" + raw_tx.hex()
 
             send_resp = await self._rpc_http.post(rpc_url, json={
                 "jsonrpc": "2.0", "method": "eth_sendRawTransaction",
