@@ -225,7 +225,7 @@ DASHBOARD_HTML = """
     </div>
     <div class="control-row">
       <label>Max Concurrent Trades</label>
-      <input type="number" id="maxConcurrent" min="1" max="5" step="1" value="2">
+      <input type="number" id="maxConcurrent" min="1" max="2000" step="1" value="2000">
     </div>
     <button class="btn-save" onclick="saveBudget()" style="margin-top:8px">Save Budget</button>
   </div>
