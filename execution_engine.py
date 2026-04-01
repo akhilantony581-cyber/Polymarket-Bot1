@@ -76,6 +76,8 @@ class ExecutionEngine:
             timeout=10.0,
             proxy=proxy_url if proxy_url else None,
         )
+        # Separate client for Polygon RPC — must NOT go through trading proxy
+        self._rpc_http = httpx.AsyncClient(timeout=10.0)
         if proxy_url:
             logger.info(f"ExecutionEngine using proxy: {proxy_url[:30]}...")
 
@@ -322,7 +324,7 @@ class ExecutionEngine:
             )
 
             # ── 3. Get EOA nonce
-            nonce_resp = await self._http.post(rpc_url, json={
+            nonce_resp = await self._rpc_http.post(rpc_url, json={
                 "jsonrpc": "2.0", "method": "eth_getTransactionCount",
                 "params": [self._wallet_address, "latest"], "id": 1,
             }, timeout=8.0)
@@ -345,7 +347,7 @@ class ExecutionEngine:
             signed = Account.sign_transaction(tx, self._private_key)
             raw_hex = "0x" + signed.rawTransaction.hex()
 
-            send_resp = await self._http.post(rpc_url, json={
+            send_resp = await self._rpc_http.post(rpc_url, json={
                 "jsonrpc": "2.0", "method": "eth_sendRawTransaction",
                 "params": [raw_hex], "id": 2,
             }, timeout=15.0)
@@ -367,3 +369,5 @@ class ExecutionEngine:
     async def close(self):
         if self._http:
             await self._http.aclose()
+        if self._rpc_http:
+            await self._rpc_http.aclose()
