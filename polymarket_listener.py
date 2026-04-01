@@ -6,6 +6,7 @@ Polls market list, YES prices, order book depth, and time to expiry.
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -154,7 +155,11 @@ class PolymarketListener:
 
     async def start(self):
         self._running = True
-        self._client = httpx.AsyncClient(timeout=10.0)
+        proxy_url = os.environ.get("PROXY_URL", "")
+        self._client = httpx.AsyncClient(
+            timeout=10.0,
+            proxy=proxy_url if proxy_url else None,
+        )
         asyncio.create_task(self._poll_loop())
         asyncio.create_task(self._fast_poll_loop())
         logger.info("PolymarketListener started (fast poll enabled)")
