@@ -252,6 +252,7 @@ DASHBOARD_HTML = """
       <input type="text" id="redeemConditionId" placeholder="0x..." style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px;font-family:monospace;width:100%">
     </div>
     <button class="btn-save" onclick="manualRedeem()" style="margin-top:8px;background:#238636">Redeem Now</button>
+    <button class="btn-save" onclick="redeemAll()" style="margin-top:8px;margin-left:8px;background:#b08800">Redeem All Positions</button>
     <div id="redeemResult" style="margin-top:8px;font-size:12px;color:#8b949e"></div>
   </div>
 
@@ -532,6 +533,13 @@ function saveBudget() {
     max_per_market: parseFloat(document.getElementById('maxPerMarket').value),
     min_trading_price: parseFloat(document.getElementById('minTradingPrice').value),
   });
+}
+
+async function redeemAll() {
+  document.getElementById('redeemResult').textContent = 'Redeeming all positions...';
+  const resp = await fetch('/redeem/all', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+  const data = await resp.json();
+  document.getElementById('redeemResult').textContent = data.message || data.detail || JSON.stringify(data);
 }
 
 async function manualRedeem() {
@@ -1016,6 +1024,23 @@ async def cancel_order(data: CancelOrderRequest):
 
 class ManualRedeemRequest(BaseModel):
     condition_id: str
+
+
+@app.post("/redeem/all")
+async def redeem_all():
+    bot = get_bot()
+    if not bot:
+        raise HTTPException(503, "Bot not running")
+    positions = list(bot.order_manager.filled_positions.values())
+    if not positions:
+        return {"message": "No filled positions to redeem"}
+    attempted = 0
+    for pos in positions:
+        if pos.redeemed or not pos.market.condition_id:
+            continue
+        pos.last_redeem_attempt = 0.0  # reset cooldown so it fires immediately
+        attempted += 1
+    return {"message": f"Queued {attempted} position(s) for redemption — check logs for results"}
 
 
 @app.post("/redeem/manual")
