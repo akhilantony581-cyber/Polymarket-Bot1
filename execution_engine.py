@@ -283,31 +283,32 @@ class ExecutionEngine:
         return None
 
     # ------------------------------------------------------------------
-    # REDEEM via ProxyWalletFactory.proxy() — same approach as
-    # 0xFives/Polymarket-Arbitrage-Crypto-Trading-Bot-V3
-    # EOA calls factory which executes redeemPositions via proxy wallet.
-    # Costs ~$0.01 in MATIC gas. No relayer needed.
+    # REDEEM via Safe.execTransaction() directly on proxy wallet (0x3d77...)
+    # EOA signs a Safe EIP-712 tx and submits it on-chain.
+    # Costs ~$0.01 MATIC. No relayer needed.
     # ------------------------------------------------------------------
     async def redeem_position(self, condition_id: str, amounts: list) -> bool:
         if not condition_id:
-            logger.error("redeem_position: condition_id is empty — cannot redeem")
+            logger.error("redeem_position: condition_id is empty")
             return False
 
-        rpc_url = os.environ.get("POLYGON_RPC_URL", "https://polygon-rpc.com")
+        proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
+        rpc_url      = os.environ.get("POLYGON_RPC_URL", "https://polygon-rpc.com")
 
-        if not self._private_key:
-            logger.warning("No private key — cannot redeem")
+        if not self._private_key or not proxy_wallet:
+            logger.warning("Missing private key or proxy wallet — cannot redeem")
             return False
 
         try:
             from eth_abi import encode as abi_encode
             from eth_utils import keccak, to_checksum_address
 
-            PROXY_FACTORY = to_checksum_address("0xaB45c5A4B0c941a2F231C04C3f49182e1A254052")
-            CTF           = to_checksum_address("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
-            USDC_E        = to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+            CTF    = to_checksum_address("0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
+            USDC_E = to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+            ZERO   = "0x0000000000000000000000000000000000000000"
+            safe   = to_checksum_address(proxy_wallet)
 
-            # ── 1. Encode redeemPositions(USDC_E, 0x0, conditionId, [1,2]) calldata
+            # ── 1. Encode redeemPositions calldata
             cid_bytes = bytes.fromhex(condition_id.replace("0x", "").zfill(64))
             redeem_selector = keccak(text="redeemPositions(address,bytes32,bytes32,uint256[])")[:4]
             redeem_calldata = redeem_selector + abi_encode(
@@ -315,52 +316,80 @@ class ExecutionEngine:
                 [USDC_E, b"\x00" * 32, cid_bytes, [1, 2]],
             )
 
-            # ── 2. Encode ProxyWalletFactory.proxy([(to, typeCode, data, value)])
-            # struct Transaction { address to; uint8 typeCode; bytes data; uint256 value; }
-            proxy_selector = keccak(text="proxy((address,uint8,bytes,uint256)[])")[:4]
-            proxy_calldata = proxy_selector + abi_encode(
-                ["(address,uint8,bytes,uint256)[]"],
-                [[(CTF, 1, redeem_calldata, 0)]],
+            # ── 2. Get Safe nonce
+            nonce_resp = await self._rpc_http.post(rpc_url, json={
+                "jsonrpc": "2.0", "method": "eth_call",
+                "params": [{"to": safe, "data": "0xaffed0e0"}, "latest"], "id": 1,
+            }, timeout=8.0)
+            safe_nonce = int(nonce_resp.json().get("result", "0x0"), 16)
+
+            # ── 3. Build Safe EIP-712 digest (Safe v1.3.0, chainId=137)
+            domain_typehash = keccak(text="EIP712Domain(uint256 chainId,address verifyingContract)")
+            domain_sep = keccak(abi_encode(["bytes32", "uint256", "address"], [domain_typehash, 137, safe]))
+
+            safe_tx_typehash = keccak(
+                text="SafeTx(address to,uint256 value,bytes data,uint8 operation,"
+                     "uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,"
+                     "address gasToken,address refundReceiver,uint256 nonce)"
+            )
+            safe_tx_hash = keccak(abi_encode(
+                ["bytes32","address","uint256","bytes32","uint8","uint256","uint256","uint256","address","address","uint256"],
+                [safe_tx_typehash, CTF, 0, keccak(redeem_calldata), 0, 0, 0, 0, ZERO, ZERO, safe_nonce],
+            ))
+            digest = keccak(b"\x19\x01" + domain_sep + safe_tx_hash)
+
+            # ── 4. Sign digest with EOA key (Safe owner)
+            from eth_keys import keys as eth_keys_lib
+            pk  = eth_keys_lib.PrivateKey(bytes.fromhex(self._private_key.replace("0x", "")))
+            sig = pk.sign_msg_hash(digest)
+            v   = sig.v + 27
+            signature = sig.r.to_bytes(32, "big") + sig.s.to_bytes(32, "big") + bytes([v])
+
+            # ── 5. Encode execTransaction calldata
+            exec_selector = keccak(
+                text="execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)"
+            )[:4]
+            exec_calldata = exec_selector + abi_encode(
+                ["address","uint256","bytes","uint8","uint256","uint256","uint256","address","address","bytes"],
+                [CTF, 0, redeem_calldata, 0, 0, 0, 0, ZERO, ZERO, signature],
             )
 
-            # ── 3. Get EOA nonce
-            nonce_resp = await self._rpc_http.post(rpc_url, json={
+            # ── 6. Get EOA nonce for the outer tx
+            eoa_nonce_resp = await self._rpc_http.post(rpc_url, json={
                 "jsonrpc": "2.0", "method": "eth_getTransactionCount",
-                "params": [self._wallet_address, "latest"], "id": 1,
+                "params": [self._wallet_address, "latest"], "id": 2,
             }, timeout=8.0)
-            nonce_result = nonce_resp.json()
-            if "error" in nonce_result:
-                logger.error(f"RPC error getting nonce: {nonce_result['error']}")
+            eoa_nonce_result = eoa_nonce_resp.json()
+            if "error" in eoa_nonce_result:
+                logger.error(f"RPC error: {eoa_nonce_result['error']}")
                 return False
-            eoa_nonce = int(nonce_result.get("result", "0x0"), 16)
+            eoa_nonce = int(eoa_nonce_result.get("result", "0x0"), 16)
 
-            # ── 4. Sign and send the transaction (EOA pays ~$0.01 in MATIC gas)
+            # ── 7. Send execTransaction TO the Safe (proxy wallet)
             tx = {
-                "to":       PROXY_FACTORY,
-                "data":     "0x" + proxy_calldata.hex(),
+                "to":       safe,
+                "data":     "0x" + exec_calldata.hex(),
                 "nonce":    eoa_nonce,
                 "chainId":  137,
-                "gasPrice": 200_000_000_000,  # 200 gwei
-                "gas":      250_000,
+                "gasPrice": 200_000_000_000,
+                "gas":      300_000,
                 "value":    0,
             }
-            signed = Account.sign_transaction(tx, self._private_key)
-            raw_tx = signed.raw_transaction if hasattr(signed, 'raw_transaction') else signed.rawTransaction
+            signed  = Account.sign_transaction(tx, self._private_key)
+            raw_tx  = signed.raw_transaction if hasattr(signed, "raw_transaction") else signed.rawTransaction
             raw_hex = "0x" + raw_tx.hex()
 
             send_resp = await self._rpc_http.post(rpc_url, json={
                 "jsonrpc": "2.0", "method": "eth_sendRawTransaction",
-                "params": [raw_hex], "id": 2,
+                "params": [raw_hex], "id": 3,
             }, timeout=15.0)
             result = send_resp.json()
 
             if "result" in result and result["result"]:
-                tx_hash = result["result"]
-                logger.info(f"Redeem tx sent: {tx_hash} condition={condition_id[:16]}...")
+                logger.info(f"Redeem tx sent: {result['result']} condition={condition_id[:16]}...")
                 return True
             else:
-                err = result.get("error", result)
-                logger.error(f"Redeem tx failed: {err}")
+                logger.error(f"Redeem tx failed: {result.get('error', result)}")
                 return False
 
         except Exception as e:
