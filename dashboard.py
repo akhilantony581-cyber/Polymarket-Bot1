@@ -1031,16 +1031,40 @@ async def redeem_all():
     bot = get_bot()
     if not bot:
         raise HTTPException(503, "Bot not running")
-    positions = list(bot.order_manager.filled_positions.values())
+
+    proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
+    if not proxy_wallet:
+        raise HTTPException(400, "POLYMARKET_PROXY_WALLET not set")
+
+    # Fetch ALL redeemable positions from Polymarket data API
+    import httpx as _httpx
+    try:
+        async with _httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": proxy_wallet, "redeemable": "true", "limit": 500},
+            )
+        positions = resp.json() if resp.status_code == 200 else []
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch positions: {e}")
+
     if not positions:
-        return {"message": "No filled positions to redeem"}
+        return {"message": "No redeemable positions found on Polymarket"}
+
     attempted = 0
-    for pos in positions:
-        if pos.redeemed or not pos.market.condition_id:
+    failed = 0
+    for p in positions:
+        cid = p.get("conditionId") or p.get("condition_id", "")
+        if not cid:
             continue
-        pos.last_redeem_attempt = 0.0  # reset cooldown so it fires immediately
-        attempted += 1
-    return {"message": f"Queued {attempted} position(s) for redemption — check logs for results"}
+        success = await bot.execution.redeem_position(cid, [])
+        if success:
+            attempted += 1
+        else:
+            failed += 1
+        await asyncio.sleep(2)  # avoid rate limiting
+
+    return {"message": f"Redeemed {attempted} position(s). Failed: {failed}. Check logs for tx hashes."}
 
 
 @app.post("/redeem/manual")
