@@ -14,6 +14,7 @@ Handles:
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
@@ -255,21 +256,51 @@ class OrderManager:
     REDEEM_RETRY_INTERVAL = 60  # seconds between redeem retries (avoid 429)
 
     async def _resolution_watcher(self):
-        """Checks filled positions every 10s and redeems as soon as market expires."""
+        """
+        Every 60s: fetch ALL redeemable positions from Polymarket data API
+        and redeem them. Covers positions from current and previous sessions.
+        """
+        import httpx as _httpx
+        proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
+        _last_api_sweep = 0.0
+
         while self._running:
             await asyncio.sleep(10)
+
+            # Redeem current-session filled positions as they expire
             for order_id, pos in list(self.filled_positions.items()):
-                if pos.redeemed:
+                if pos.redeemed or not pos.market.is_expired:
                     continue
-                if not pos.market.is_expired:
-                    continue
-                # Rate-limit: don't retry more than once per minute
                 if time.time() - pos.last_redeem_attempt < self.REDEEM_RETRY_INTERVAL:
                     continue
                 logger.info(f"Market expired — redeeming position {order_id[:16]}...")
                 pos.last_redeem_attempt = time.time()
                 await self._attempt_redeem(pos)
-                await asyncio.sleep(2)  # small gap between sequential redeems
+                await asyncio.sleep(2)
+
+            # Every 60s: sweep Polymarket API for any redeemable positions
+            if not proxy_wallet or time.time() - _last_api_sweep < 60:
+                continue
+            _last_api_sweep = time.time()
+            try:
+                async with _httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(
+                        "https://data-api.polymarket.com/positions",
+                        params={"user": proxy_wallet, "redeemable": "true", "limit": 500},
+                    )
+                positions = resp.json() if resp.status_code == 200 else []
+                if positions:
+                    logger.info(f"Auto-redeem: {len(positions)} redeemable position(s) found")
+                for p in positions:
+                    cid = p.get("conditionId") or p.get("condition_id", "")
+                    if not cid:
+                        continue
+                    success = await self.execution.redeem_position(cid, [])
+                    if success and self.on_redeem:
+                        self.on_redeem(None)
+                    await asyncio.sleep(3)
+            except Exception as e:
+                logger.debug(f"Auto-redeem sweep error: {e}")
 
     async def _attempt_redeem(self, pos: ManagedPosition):
         if not pos.market.condition_id:
