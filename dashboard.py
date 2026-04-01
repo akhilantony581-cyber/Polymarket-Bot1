@@ -79,6 +79,9 @@ class PriceRangeUpdate(BaseModel):
 class BudgetUpdate(BaseModel):
     total: float
     max_concurrent: int
+    max_per_trade: float = 10.0
+    max_per_market: float = 20.0
+    min_trading_price: float = 0.99
 
 
 class TradeUpdate(BaseModel):
@@ -227,7 +230,29 @@ DASHBOARD_HTML = """
       <label>Max Concurrent Trades</label>
       <input type="number" id="maxConcurrent" min="1" max="2000" step="1" value="2000">
     </div>
+    <div class="control-row">
+      <label>Max Amount Per Trade ($)</label>
+      <input type="number" id="maxPerTrade" min="1" step="1" value="10">
+    </div>
+    <div class="control-row">
+      <label>Max Amount Per Market ($)</label>
+      <input type="number" id="maxPerMarket" min="1" step="1" value="20">
+    </div>
+    <div class="control-row">
+      <label>Min Trading Price</label>
+      <input type="number" id="minTradingPrice" min="0.90" max="0.99" step="0.001" value="0.99">
+    </div>
     <button class="btn-save" onclick="saveBudget()" style="margin-top:8px">Save Budget</button>
+  </div>
+
+  <div class="card">
+    <h3>Manual Redeem</h3>
+    <div class="control-row">
+      <label>Condition ID</label>
+      <input type="text" id="redeemConditionId" placeholder="0x..." style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px;font-family:monospace;width:100%">
+    </div>
+    <button class="btn-save" onclick="manualRedeem()" style="margin-top:8px;background:#238636">Redeem Now</button>
+    <div id="redeemResult" style="margin-top:8px;font-size:12px;color:#8b949e"></div>
   </div>
 
   <div class="card">
@@ -408,6 +433,9 @@ function _updateStateInner(s) {
     document.getElementById('minEntryVal').textContent = parseFloat(s.config.min_entry).toFixed(3);
     document.getElementById('totalCapital').value = s.config.total_capital;
     document.getElementById('maxConcurrent').value = s.config.max_concurrent;
+    if (s.config.max_per_trade)   document.getElementById('maxPerTrade').value   = s.config.max_per_trade;
+    if (s.config.max_per_market)  document.getElementById('maxPerMarket').value  = s.config.max_per_market;
+    if (s.config.min_trading_price) document.getElementById('minTradingPrice').value = s.config.min_trading_price;
   }
 
   // Active Orders
@@ -500,7 +528,23 @@ function saveBudget() {
   api('/settings/budget', {
     total: parseFloat(document.getElementById('totalCapital').value),
     max_concurrent: parseInt(document.getElementById('maxConcurrent').value),
+    max_per_trade: parseFloat(document.getElementById('maxPerTrade').value),
+    max_per_market: parseFloat(document.getElementById('maxPerMarket').value),
+    min_trading_price: parseFloat(document.getElementById('minTradingPrice').value),
   });
+}
+
+async function manualRedeem() {
+  const cid = document.getElementById('redeemConditionId').value.trim();
+  if (!cid) { document.getElementById('redeemResult').textContent = 'Enter a condition ID first.'; return; }
+  document.getElementById('redeemResult').textContent = 'Submitting...';
+  const resp = await fetch('/redeem/manual', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({condition_id: cid})
+  });
+  const data = await resp.json();
+  document.getElementById('redeemResult').textContent = data.message || data.detail || JSON.stringify(data);
 }
 
 function saveKelly() {
@@ -795,8 +839,12 @@ async def update_budget(data: BudgetUpdate):
     config = load_config()
     config["capital"]["total"] = data.total
     config["capital"]["max_concurrent_trades"] = data.max_concurrent
+    config["capital"]["max_per_trade"] = data.max_per_trade
+    config["capital"]["max_per_market"] = data.max_per_market
+    config["price"]["min_entry"] = round(data.min_trading_price, 4)
+    config["price"]["sniper_min"] = round(data.min_trading_price, 4)
     save_config(config)
-    return {"message": f"Budget updated: capital=${data.total} concurrent={data.max_concurrent}"}
+    return {"message": f"Budget updated"}
 
 
 @app.post("/settings/trade")
@@ -964,6 +1012,23 @@ async def cancel_order(data: CancelOrderRequest):
         bot.order_manager.active_orders.pop(data.order_id, None)
         return {"message": f"Order {data.order_id} cancelled"}
     raise HTTPException(500, "Cancel failed")
+
+
+class ManualRedeemRequest(BaseModel):
+    condition_id: str
+
+
+@app.post("/redeem/manual")
+async def manual_redeem(data: ManualRedeemRequest):
+    bot = get_bot()
+    if not bot:
+        raise HTTPException(503, "Bot not running")
+    if not data.condition_id or len(data.condition_id) < 10:
+        raise HTTPException(400, "Invalid condition_id")
+    success = await bot.execution.redeem_position(data.condition_id, [])
+    if success:
+        return {"message": f"Redeem tx sent for condition {data.condition_id[:16]}..."}
+    raise HTTPException(500, "Redeem failed — check logs for details")
 
 
 # ------------------------------------------------------------------

@@ -158,7 +158,8 @@ class TradingBot:
         )
 
     async def _scan_markets(self):
-        sniper_size = self.config["capital"]["total"] * 0.10  # 10% per trade
+        max_per_trade = self.config["capital"].get("max_per_trade", self.config["capital"]["total"] * 0.10)
+        sniper_size = min(max_per_trade, self.config["capital"]["total"] * 0.10)
 
         qualifying = []
         for market in list(self.poly_listener.markets.values()):
@@ -356,6 +357,9 @@ class TradingBot:
                 "min_entry": self.config["price"]["min_entry"],
                 "total_capital": self.config["capital"]["total"],
                 "max_concurrent": self.config["capital"]["max_concurrent_trades"],
+                "max_per_trade": self.config["capital"].get("max_per_trade", 10.0),
+                "max_per_market": self.config["capital"].get("max_per_market", 20.0),
+                "min_trading_price": self.config["price"].get("min_entry", 0.99),
             },
             "prices": self._get_prices(),
         }
