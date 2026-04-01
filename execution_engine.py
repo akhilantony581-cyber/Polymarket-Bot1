@@ -326,7 +326,11 @@ class ExecutionEngine:
                 "jsonrpc": "2.0", "method": "eth_getTransactionCount",
                 "params": [self._wallet_address, "latest"], "id": 1,
             }, timeout=8.0)
-            eoa_nonce = int(nonce_resp.json()["result"], 16)
+            nonce_result = nonce_resp.json()
+            if "error" in nonce_result:
+                logger.error(f"RPC error getting nonce: {nonce_result['error']}")
+                return False
+            eoa_nonce = int(nonce_result.get("result", "0x0"), 16)
 
             # ── 4. Sign and send the transaction (EOA pays ~$0.01 in MATIC gas)
             tx = {
