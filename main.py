@@ -225,11 +225,22 @@ class TradingBot:
             # ── Momentum gate (suggestions 2 & 4) ──────────────────────────
             if mg_enabled:
                 bd = self.binance.get(market.coin)
-                if bd and self.binance.is_ready(market.coin):
+                binance_ready = bd and self.binance.is_ready(market.coin)
+
+                if not binance_ready:
+                    # No Binance data for this coin (e.g. HYPE not on Binance).
+                    # Fall back to strict threshold — only take near-certain outcomes.
+                    if price < 0.99:
+                        logger.debug(
+                            f"No Binance data for {market.coin} — "
+                            f"requiring 0.99, got {price:.4f}, skipping"
+                        )
+                        continue
+                else:
                     mom = bd.momentum(mg_window)
                     if mom is not None:
                         buying_up = (side == "yes")
-                        # Block if momentum is running hard against the direction
+                        # Require momentum to be actively in our favour (not just "not bad")
                         if buying_up and mom < mg_min_pct:
                             logger.debug(
                                 f"Momentum gate SKIP {market.coin} {market.timeframe} "
@@ -242,8 +253,7 @@ class TradingBot:
                                 f"DOWN blocked mom={mom:.3f}%"
                             )
                             continue
-                        # Near-boundary skip: momentum is too weak to confirm direction
-                        # (only apply with >5s left — in final 5s take the trade anyway)
+                        # Near-boundary skip: momentum too weak to confirm direction
                         if market.seconds_to_expiry > 5 and abs(mom) < mg_boundary:
                             logger.debug(
                                 f"Boundary skip {market.coin} {market.timeframe} "
@@ -305,10 +315,16 @@ class TradingBot:
             if price < s2_min_price:
                 continue
 
-            # Momentum gate for snipe2 — only block if sharply against direction
+            # Momentum gate for snipe2
             if mg_enabled:
                 bd = self.binance.get(market.coin)
-                if bd and self.binance.is_ready(market.coin):
+                binance_ready = bd and self.binance.is_ready(market.coin)
+                if not binance_ready:
+                    # No Binance data — require stricter price floor for snipe2 too
+                    if price < 0.98:
+                        logger.debug(f"S2 no Binance data for {market.coin}, price {price:.4f} < 0.98, skipping")
+                        continue
+                else:
                     mom = bd.momentum(15)  # shorter window for last-10s trades
                     if mom is not None:
                         buying_up = (side == "yes")

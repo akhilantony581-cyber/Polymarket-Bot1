@@ -5,10 +5,10 @@
 # --- Capital & Risk ---
 capital:
   total: 100.0
-  max_concurrent_trades: 2000
+  max_concurrent_trades: 5          # limit concurrent exposure
   maker_allocation_pct: 0.30
-  max_per_trade: 20.0
-  max_per_market: 40.0       # 30% of capital reserved for maker orders
+  max_per_trade: 5.0                # max 5% of capital per trade (was $20)
+  max_per_market: 10.0              # max 10% per market (was $40)
 
 risk:
   consecutive_loss_limit: 3        # Stop trading after 3 consecutive losses
@@ -74,15 +74,15 @@ markets:
 momentum_gate:
   enabled: true
   window_seconds: 30       # look-back window for momentum calculation
-  min_pct: -0.05           # allow up to -0.05% drift against direction before blocking
-  boundary_pct: 0.02       # skip if |30s momentum| < 0.02% (price undecided, skip unless <5s left)
+  min_pct: 0.03            # require at least +0.03% momentum IN trade direction (was -0.05 — too lenient)
+  boundary_pct: 0.10       # skip if |30s momentum| < 0.10% (was 0.02 — too easy to pass)
 
 # --- Snipe 2 Mode (last 10 seconds, any price >= 0.95) ---
 snipe2:
   enabled: true
   min_price: 0.95
-  max_per_trade: 10.0
-  max_per_market: 20.0
+  max_per_trade: 3.0        # reduced from $10 — snipe2 is highest risk
+  max_per_market: 6.0
   window_seconds: 10
 
 
