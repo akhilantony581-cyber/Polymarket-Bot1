@@ -183,7 +183,7 @@ class ExecutionEngine:
             logger.error("No CLOB client — order placement disabled")
             return None
 
-        price = 0.99  # willing to pay up to CLOB max; fills at best ask
+        price = 0.9999  # willing to pay up to CLOB max; fills at best ask
         try:
             shares = round(size / price, 6)
             order_args = OrderArgs(
