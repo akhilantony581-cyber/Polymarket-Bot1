@@ -98,11 +98,12 @@ class TradingBot:
         logger.info("Waiting for data feeds to warm up (5s)...")
         await asyncio.sleep(5)
 
-        # Main loop
+        # Main loop — all top-level coroutines are supervised (auto-restart on crash)
         await asyncio.gather(
-            self._trading_loop(),
-            self._config_watcher(),
-            self._keepalive_loop(),
+            self._supervise(self._trading_loop, "trading_loop"),
+            self._supervise(self._config_watcher, "config_watcher"),
+            self._supervise(self._keepalive_loop, "keepalive_loop"),
+            self._supervise(self._watchdog_loop, "watchdog_loop"),
         )
 
     async def stop(self):
@@ -113,6 +114,34 @@ class TradingBot:
         await self.execution.close()
         await self.risk_manager.close()
         logger.info("Bot stopped cleanly")
+
+    # ------------------------------------------------------------------
+    # SUPERVISOR — restarts any loop that crashes
+    # ------------------------------------------------------------------
+    async def _supervise(self, coro_func, name: str):
+        while self._running:
+            try:
+                await coro_func()
+            except Exception as e:
+                logger.error(f"[WATCHDOG] {name} crashed: {e} — restarting in 3s", exc_info=True)
+                await asyncio.sleep(3)
+
+    # ------------------------------------------------------------------
+    # WATCHDOG — detects stalled feeds and logs alerts
+    # ------------------------------------------------------------------
+    async def _watchdog_loop(self):
+        while self._running:
+            await asyncio.sleep(60)
+            markets = list(self.poly_listener.markets.values())
+            if not markets:
+                logger.warning("[WATCHDOG] No markets tracked — listener may be stalled or proxy is down")
+            else:
+                stale = [m for m in markets if time.time() - m.last_updated > 30]
+                if stale:
+                    logger.warning(f"[WATCHDOG] {len(stale)} market(s) not updated in 30s — possible stall")
+            if not self.order_manager._running:
+                logger.error("[WATCHDOG] OrderManager is not running — attempting restart")
+                await self.order_manager.start()
 
     # ------------------------------------------------------------------
     # MAIN TRADING LOOP
@@ -365,17 +394,18 @@ class TradingBot:
     # CONFIG HOT-RELOAD WATCHER
     # ------------------------------------------------------------------
     async def _keepalive_loop(self):
-        """Self-ping every 5 minutes to prevent proxy idle timeouts."""
+        """Self-ping every 60 seconds to prevent proxy/Railway idle timeouts."""
         import httpx as _httpx
         port = self.config.get("dashboard", {}).get("port", 8080)
-        await asyncio.sleep(60)  # wait for server to start
+        await asyncio.sleep(30)  # wait for server to start
         while self._running:
             try:
                 async with _httpx.AsyncClient(timeout=5.0) as c:
                     await c.get(f"http://localhost:{port}/ping")
-            except Exception:
-                pass
-            await asyncio.sleep(5 * 60)
+                    logger.debug("Keepalive ping OK")
+            except Exception as e:
+                logger.debug(f"Keepalive ping failed: {e}")
+            await asyncio.sleep(60)
 
     async def _config_watcher(self):
         interval = self.config.get("dashboard", {}).get("config_watch_interval", 2.0)

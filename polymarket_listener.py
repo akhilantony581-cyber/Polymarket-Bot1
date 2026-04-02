@@ -166,14 +166,23 @@ class PolymarketListener:
             timeout=10.0,
             proxy=proxy_url if proxy_url else None,
         )
-        asyncio.create_task(self._poll_loop())
-        asyncio.create_task(self._fast_poll_loop())
+        asyncio.create_task(self._supervised_loop(self._poll_loop, "poll_loop"))
+        asyncio.create_task(self._supervised_loop(self._fast_poll_loop, "fast_poll_loop"))
         logger.info("PolymarketListener started (fast poll enabled)")
 
     async def stop(self):
         self._running = False
         if self._client:
             await self._client.aclose()
+
+    async def _supervised_loop(self, coro_func, name: str):
+        """Restart coro_func if it ever crashes, so it never silently dies."""
+        while self._running:
+            try:
+                await coro_func()
+            except Exception as e:
+                logger.error(f"[WATCHDOG] {name} crashed: {e} — restarting in 3s", exc_info=True)
+                await asyncio.sleep(3)
 
     async def _poll_loop(self):
         while self._running:
