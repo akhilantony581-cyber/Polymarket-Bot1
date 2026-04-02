@@ -158,8 +158,7 @@ class TradingBot:
         )
 
     async def _scan_markets(self):
-        max_per_trade = self.config["capital"].get("max_per_trade", self.config["capital"]["total"] * 0.10)
-        sniper_size = min(max_per_trade, self.config["capital"]["total"] * 0.10)
+        sniper_size = self.config["capital"].get("max_per_trade", 10.0)
 
         qualifying = []
         for market in list(self.poly_listener.markets.values()):
