@@ -165,6 +165,59 @@ class ExecutionEngine:
             return None
 
     # ------------------------------------------------------------------
+    # PLACE MARKET ORDER (FOK — Fill or Kill) for Snipe 2
+    # ------------------------------------------------------------------
+    async def place_market_order(
+        self,
+        token_id: str,
+        market_id: str,
+        size: float,
+    ) -> Optional[PlacedOrder]:
+        """
+        Submit a Fill-or-Kill order at price=0.99 (CLOB max).
+        Acts as a market order: fills immediately at the best available
+        ask price, or cancels instantly if no liquidity.
+        Used exclusively by Snipe 2 (last 10s, price >= 0.95).
+        """
+        if not self._clob:
+            logger.error("No CLOB client — order placement disabled")
+            return None
+
+        price = 0.99  # willing to pay up to CLOB max; fills at best ask
+        try:
+            shares = round(size / price, 6)
+            order_args = OrderArgs(
+                token_id=token_id,
+                price=price,
+                size=shares,
+                side="BUY",
+            )
+            signed_order = self._clob.create_order(order_args)
+            resp = self._clob.post_order(signed_order, OrderType.FOK)
+            order_id = resp.get("orderID") or resp.get("order_id", "")
+            if not order_id:
+                logger.warning(f"SNIPE2 FOK no order ID: {resp}")
+                return None
+
+            order = PlacedOrder(
+                order_id=order_id,
+                market_id=market_id,
+                token_id=token_id,
+                side="buy",
+                price=price,
+                size=shares,
+                mode="snipe2",
+            )
+            logger.info(
+                f"SNIPE2 FOK placed {order_id} "
+                f"shares={shares:.4f} market={market_id[:16]}..."
+            )
+            return order
+        except Exception as e:
+            logger.error(f"SNIPE2 market order failed: {e}")
+            return None
+
+    # ------------------------------------------------------------------
     # CANCEL ORDER
     # ------------------------------------------------------------------
     async def cancel_order(self, order: PlacedOrder) -> bool:

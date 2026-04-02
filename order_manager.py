@@ -121,13 +121,21 @@ class OrderManager:
         mode: str,
     ) -> Optional[ManagedPosition]:
 
-        order = await self.execution.place_limit_order(
-            token_id=market.trade_token_id,
-            market_id=market.market_id,
-            price=price,
-            size=usdc_size,
-            mode=mode,
-        )
+        if mode == "snipe2":
+            # FOK (Fill or Kill) = market order: fills at best ask or cancels instantly
+            order = await self.execution.place_market_order(
+                token_id=market.trade_token_id,
+                market_id=market.market_id,
+                size=usdc_size,
+            )
+        else:
+            order = await self.execution.place_limit_order(
+                token_id=market.trade_token_id,
+                market_id=market.market_id,
+                price=price,
+                size=usdc_size,
+                mode=mode,
+            )
         if not order:
             return None
 
@@ -151,6 +159,18 @@ class OrderManager:
         order = pos.order
         market = pos.market
         mode = pos.mode
+        # snipe2 uses FOK: fills or cancels in milliseconds — just poll once quickly
+        if mode == "snipe2":
+            await asyncio.sleep(1.0)
+            status = await self.execution.get_order_status(order)
+            if status == OrderStatus.FILLED:
+                self._on_order_filled(pos)
+            else:
+                order.status = OrderStatus.CANCELLED
+                self.active_orders.pop(order.order_id, None)
+                logger.info(f"SNIPE2 FOK not filled (cancelled): {order.order_id}")
+            return
+
         # For sniper: timeout = min(config, seconds_to_expiry - 2) so order
         # stays alive right up to market resolution without outlasting it.
         base_timeout = self._timeout_for_mode(mode)
