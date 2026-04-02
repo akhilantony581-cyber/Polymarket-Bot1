@@ -371,6 +371,7 @@ class OrderManager:
         return {
             "standard": self.STANDARD_TIMEOUT,
             "sniper": self.SNIPER_TIMEOUT,
+            "snipe2": self.SNIPER_TIMEOUT,
             "maker": self.MAKER_TIMEOUT,
         }.get(mode, self.STANDARD_TIMEOUT)
 

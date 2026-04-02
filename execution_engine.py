@@ -124,7 +124,7 @@ class ExecutionEngine:
         size: float,
         mode: str = "standard",
     ) -> Optional[PlacedOrder]:
-        if mode != "manual" and price < self.config.get("price", {}).get("min_entry", 0.98):
+        if mode not in ("manual", "snipe2") and price < self.config.get("price", {}).get("min_entry", 0.98):
             logger.warning(f"Rejected: price {price} below hard floor")
             return None
         if not self._clob:
