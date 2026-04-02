@@ -169,7 +169,7 @@ class TradingBot:
 
             # For markets approaching threshold within final 2 minutes,
             # fetch a fresh CLOB price right now rather than relying on cache.
-            if 0.95 <= price < 0.99 and market.seconds_to_expiry <= 120:
+            if 0.90 <= price < 0.99 and market.seconds_to_expiry <= 300:
                 await self.poly_listener._fetch_clob_prices_for_market(market)
                 side, price = market.best_trade_side
 

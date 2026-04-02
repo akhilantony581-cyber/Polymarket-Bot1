@@ -855,7 +855,15 @@ async def update_budget(data: BudgetUpdate):
     config["price"]["min_entry"] = round(data.min_trading_price, 4)
     config["price"]["sniper_min"] = round(data.min_trading_price, 4)
     save_config(config)
-    return {"message": f"Budget updated"}
+    # Also update live bot config immediately (don't wait for file watcher)
+    bot = get_bot()
+    if bot:
+        bot.config["capital"]["max_per_trade"] = data.max_per_trade
+        bot.config["capital"]["max_per_market"] = data.max_per_market
+        bot.config["capital"]["total"] = data.total
+        bot.config["capital"]["max_concurrent_trades"] = data.max_concurrent
+        bot.config["price"]["min_entry"] = round(data.min_trading_price, 4)
+    return {"message": f"Budget updated — trades will now use ${data.max_per_trade} per order"}
 
 
 @app.post("/settings/trade")
