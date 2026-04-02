@@ -68,7 +68,15 @@ markets:
     BNB: "BNBUSDT"
     HYPE: "HYPEUSDT"
 
-# --- Execution ---
+# --- Snipe 2 Mode (last 10 seconds, any price >= 0.95) ---
+snipe2:
+  enabled: true
+  min_price: 0.95
+  max_per_trade: 10.0
+  max_per_market: 20.0
+  window_seconds: 10
+
+
 execution:
   polygon_rpc: "${POLYGON_RPC_URL}"
   order_check_interval: 1.0        # Seconds between order status checks

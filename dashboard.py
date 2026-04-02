@@ -262,6 +262,31 @@ DASHBOARD_HTML = """
   </div>
 
   <div class="card">
+    <h3>Snipe 2 Settings <small style="color:#8b949e;font-size:11px">(last 10s, price ≥ 0.95)</small></h3>
+    <div class="control-row">
+      <label>Enabled</label>
+      <input type="checkbox" id="s2Enabled" checked style="width:auto">
+    </div>
+    <div class="control-row">
+      <label>Min Price</label>
+      <input type="number" id="s2MinPrice" min="0.90" max="0.99" step="0.01" value="0.95">
+    </div>
+    <div class="control-row">
+      <label>Amount Per Trade ($)</label>
+      <input type="number" id="s2PerTrade" min="1" step="1" value="10">
+    </div>
+    <div class="control-row">
+      <label>Max Per Market ($)</label>
+      <input type="number" id="s2PerMarket" min="1" step="1" value="20">
+    </div>
+    <div class="control-row">
+      <label>Window (seconds)</label>
+      <input type="number" id="s2Window" min="5" max="30" step="1" value="10">
+    </div>
+    <button class="btn-save" onclick="saveSnipe2()" style="margin-top:8px">Save Snipe 2</button>
+  </div>
+
+  <div class="card">
     <h3>Kelly Position Sizing</h3>
     <div class="control-row">
       <label>Score 95-100 (%)</label>
@@ -450,6 +475,15 @@ function _updateStateInner(s) {
     document.getElementById('minEntryVal').textContent = parseFloat(s.config.min_entry).toFixed(3);
     document.getElementById('totalCapital').value = s.config.total_capital;
     if (s.config.max_concurrent) document.getElementById('maxConcurrent').value = s.config.max_concurrent;
+    if (s.config.snipe2 && !document.getElementById('s2MinPrice')._loaded) {
+      const s2 = s.config.snipe2;
+      document.getElementById('s2Enabled').checked  = s2.enabled !== false;
+      document.getElementById('s2MinPrice').value   = s2.min_price  || 0.95;
+      document.getElementById('s2PerTrade').value   = s2.per_trade  || 10;
+      document.getElementById('s2PerMarket').value  = s2.per_market || 20;
+      document.getElementById('s2Window').value     = s2.window     || 10;
+      document.getElementById('s2MinPrice')._loaded = true;
+    }
     if (!document.getElementById('maxPerTrade')._loaded) {
       document.getElementById('maxPerTrade').value   = s.config.max_per_trade || 10;
       document.getElementById('maxPerMarket').value  = s.config.max_per_market || 20;
@@ -599,6 +633,16 @@ async function manualRedeem() {
   });
   const data = await resp.json();
   document.getElementById('redeemResult').textContent = data.message || data.detail || JSON.stringify(data);
+}
+
+function saveSnipe2() {
+  api('/settings/snipe2', {
+    enabled:    document.getElementById('s2Enabled').checked,
+    min_price:  parseFloat(document.getElementById('s2MinPrice').value),
+    per_trade:  parseFloat(document.getElementById('s2PerTrade').value),
+    per_market: parseFloat(document.getElementById('s2PerMarket').value),
+    window:     parseInt(document.getElementById('s2Window').value),
+  });
 }
 
 function saveKelly() {
@@ -1066,6 +1110,31 @@ async def cancel_order(data: CancelOrderRequest):
         bot.order_manager.active_orders.pop(data.order_id, None)
         return {"message": f"Order {data.order_id} cancelled"}
     raise HTTPException(500, "Cancel failed")
+
+
+class Snipe2Update(BaseModel):
+    enabled: bool = True
+    min_price: float = 0.95
+    per_trade: float = 10.0
+    per_market: float = 20.0
+    window: int = 10
+
+
+@app.post("/settings/snipe2")
+async def update_snipe2(data: Snipe2Update):
+    config = load_config()
+    config["snipe2"] = {
+        "enabled":    data.enabled,
+        "min_price":  round(data.min_price, 3),
+        "max_per_trade":  data.per_trade,
+        "max_per_market": data.per_market,
+        "window_seconds": data.window,
+    }
+    save_config(config)
+    bot = get_bot()
+    if bot:
+        bot.config["snipe2"] = config["snipe2"]
+    return {"message": f"Snipe 2 updated — {'enabled' if data.enabled else 'disabled'}, min={data.min_price}, ${data.per_trade}/trade"}
 
 
 class ManualRedeemRequest(BaseModel):

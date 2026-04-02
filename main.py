@@ -218,6 +218,48 @@ class TradingBot:
 
         await asyncio.gather(*[_submit_one(m, s, p) for m, s, p in qualifying])
 
+        # ── Snipe 2: last 10 seconds, price >= 0.95
+        s2 = self.config.get("snipe2", {})
+        if not s2.get("enabled", True):
+            return
+        s2_min_price   = s2.get("min_price", 0.95)
+        s2_size        = s2.get("max_per_trade", 10.0)
+        s2_max_market  = s2.get("max_per_market", 20.0)
+        s2_window      = s2.get("window_seconds", 10)
+
+        s2_qualifying = []
+        for market in list(self.poly_listener.markets.values()):
+            if market.is_expired:
+                continue
+            if market.seconds_to_expiry > s2_window:
+                continue
+            side, price = market.best_trade_side
+            price = min(price, 0.99)
+            if price < s2_min_price:
+                continue
+            if self._market_has_active_order(market.market_id):
+                continue
+            if self._market_exposure(market.market_id) >= s2_max_market:
+                continue
+            can, _ = self.risk_manager.can_trade(self.order_manager.active_count + len(s2_qualifying))
+            if not can:
+                break
+            s2_qualifying.append((market, side, price))
+
+        async def _submit_snipe2(market, side, price):
+            logger.info(
+                f"SNIPE2 [{market.coin} {market.timeframe}] "
+                f"{side.upper()}@{price:.4f} size=${s2_size:.2f} tte={market.seconds_to_expiry:.0f}s"
+            )
+            pos = await self.order_manager.submit(
+                market=market, price=price, usdc_size=s2_size, mode="snipe2",
+            )
+            if pos:
+                self.risk_manager.record_trade_open(pos)
+
+        if s2_qualifying:
+            await asyncio.gather(*[_submit_snipe2(m, s, p) for m, s, p in s2_qualifying])
+
     async def _execute_trade(self, market, signal, size: float):
         mode = signal.mode.value
         price = self._entry_price(market, signal)
@@ -383,6 +425,7 @@ class TradingBot:
                 "max_per_trade": self.config["capital"].get("max_per_trade", 10.0),
                 "max_per_market": self.config["capital"].get("max_per_market", 20.0),
                 "min_trading_price": self.config["price"].get("min_entry", 0.99),
+                "snipe2": self.config.get("snipe2", {}),
             },
             "prices": self._get_prices(),
         }
