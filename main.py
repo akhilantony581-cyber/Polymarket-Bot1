@@ -370,6 +370,7 @@ class TradingBot:
                     "pnl": p.pnl,
                 }
                 for p in self.order_manager.filled_positions.values()
+                if not p.redeemed
             ],
             "recent_trades": [
                 t.to_dict() for t in self.risk_manager.trade_history[-20:]
