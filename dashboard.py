@@ -709,6 +709,9 @@ function updateLogs(logs) {
 // Poll state every 3s via HTTP as backup
 setInterval(() => fetch('/state').then(r=>r.json()).then(d=>updateState(d)), 3000);
 
+// Keepalive ping every 5 minutes — prevents browser tab sleep and proxy idle timeouts
+setInterval(() => fetch('/ping').catch(()=>{}), 5 * 60 * 1000);
+
 // Transaction Log
 async function loadTxLog() {
   const tbody = document.getElementById('txLog');
@@ -1139,6 +1142,11 @@ async def update_snipe2(data: Snipe2Update):
 
 class ManualRedeemRequest(BaseModel):
     condition_id: str
+
+
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
 
 
 @app.post("/redeem/all")

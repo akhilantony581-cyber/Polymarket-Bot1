@@ -102,6 +102,7 @@ class TradingBot:
         await asyncio.gather(
             self._trading_loop(),
             self._config_watcher(),
+            self._keepalive_loop(),
         )
 
     async def stop(self):
@@ -363,6 +364,19 @@ class TradingBot:
     # ------------------------------------------------------------------
     # CONFIG HOT-RELOAD WATCHER
     # ------------------------------------------------------------------
+    async def _keepalive_loop(self):
+        """Self-ping every 5 minutes to prevent proxy idle timeouts."""
+        import httpx as _httpx
+        port = self.config.get("dashboard", {}).get("port", 8080)
+        await asyncio.sleep(60)  # wait for server to start
+        while self._running:
+            try:
+                async with _httpx.AsyncClient(timeout=5.0) as c:
+                    await c.get(f"http://localhost:{port}/ping")
+            except Exception:
+                pass
+            await asyncio.sleep(5 * 60)
+
     async def _config_watcher(self):
         interval = self.config.get("dashboard", {}).get("config_watch_interval", 2.0)
         while self._running:
