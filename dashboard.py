@@ -433,10 +433,13 @@ function _updateStateInner(s) {
     me.value = s.config.min_entry;
     document.getElementById('minEntryVal').textContent = parseFloat(s.config.min_entry).toFixed(3);
     document.getElementById('totalCapital').value = s.config.total_capital;
-    document.getElementById('maxConcurrent').value = s.config.max_concurrent;
-    if (s.config.max_per_trade)   document.getElementById('maxPerTrade').value   = s.config.max_per_trade;
-    if (s.config.max_per_market)  document.getElementById('maxPerMarket').value  = s.config.max_per_market;
-    if (s.config.min_trading_price) document.getElementById('minTradingPrice').value = s.config.min_trading_price;
+    if (s.config.max_concurrent) document.getElementById('maxConcurrent').value = s.config.max_concurrent;
+    if (!document.getElementById('maxPerTrade')._loaded) {
+      document.getElementById('maxPerTrade').value   = s.config.max_per_trade || 10;
+      document.getElementById('maxPerMarket').value  = s.config.max_per_market || 20;
+      document.getElementById('minTradingPrice').value = s.config.min_trading_price || 0.99;
+      document.getElementById('maxPerTrade')._loaded = true;
+    }
   }
 
   // Active Orders
