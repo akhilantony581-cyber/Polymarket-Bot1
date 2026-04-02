@@ -8,7 +8,7 @@ capital:
   max_concurrent_trades: 2000
   maker_allocation_pct: 0.30
   max_per_trade: 20.0
-  max_per_market: 50.0       # 30% of capital reserved for maker orders
+  max_per_market: 40.0       # 30% of capital reserved for maker orders
 
 risk:
   consecutive_loss_limit: 3        # Stop trading after 3 consecutive losses

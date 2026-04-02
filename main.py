@@ -158,11 +158,16 @@ class TradingBot:
         )
 
     async def _scan_markets(self):
-        sniper_size = self.config["capital"].get("max_per_trade", 10.0)
+        sniper_size = self.config["capital"].get("max_per_trade", 20.0)
+        max_per_market = self.config["capital"].get("max_per_market", 40.0)
 
         qualifying = []
         for market in list(self.poly_listener.markets.values()):
             if market.is_expired:
+                continue
+
+            # Only trade within 90 seconds of expiry
+            if market.seconds_to_expiry > 90:
                 continue
 
             side, price = market.best_trade_side
@@ -178,6 +183,11 @@ class TradingBot:
                 continue
 
             if self._market_has_active_order(market.market_id):
+                continue
+
+            # Enforce max per market cap
+            market_exposure = self._market_exposure(market.market_id)
+            if market_exposure >= max_per_market:
                 continue
 
             can, reason = self.risk_manager.can_trade(self.order_manager.active_count + len(qualifying))
@@ -273,6 +283,18 @@ class TradingBot:
             return round(lo + (hi - lo) * 0.5, 4)
 
         return market.yes_price
+
+    def _market_exposure(self, market_id: str) -> float:
+        """Total USDC committed to a market across active orders and filled positions."""
+        total = sum(
+            p.entry_usdc for p in self.order_manager.active_orders.values()
+            if p.market.market_id == market_id
+        )
+        total += sum(
+            p.entry_usdc for p in self.order_manager.filled_positions.values()
+            if p.market.market_id == market_id and not p.redeemed
+        )
+        return total
 
     def _market_has_active_order(self, market_id: str) -> bool:
         for pos in self.order_manager.active_orders.values():
