@@ -151,7 +151,7 @@ class PolymarketListener:
         self.markets: Dict[str, PolymarketMarket] = {}
         self._running = False
         self._client: Optional[httpx.AsyncClient] = None
-        self.poll_interval = 2.0
+        self.poll_interval = 1.0
 
     async def start(self):
         self._running = True
@@ -502,7 +502,7 @@ class PolymarketListener:
         Near-expiry markets are fetched concurrently for minimum latency.
         """
         all_markets = list(self.markets.values())
-        near_expiry_markets = [m for m in all_markets if m.seconds_to_expiry <= 600 and m.yes_token_id and m.no_token_id]
+        near_expiry_markets = [m for m in all_markets if m.yes_token_id and m.no_token_id]
         other_markets = [m for m in all_markets if m.seconds_to_expiry > 600]
 
         # Fetch CLOB prices for ALL near-expiry markets simultaneously
