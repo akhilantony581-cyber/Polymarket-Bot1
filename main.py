@@ -166,8 +166,9 @@ class TradingBot:
             if market.is_expired:
                 continue
 
-            # Only trade within 90 seconds of expiry
-            if market.seconds_to_expiry > 90:
+            # 5m markets: trade within 150s of expiry; 15m markets: 90s
+            window = 150 if market.timeframe == "5m" else 90
+            if market.seconds_to_expiry > window:
                 continue
 
             side, price = market.best_trade_side
