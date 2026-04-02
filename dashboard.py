@@ -403,6 +403,30 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Win Rate Stats -->
+<div class="section-pad">
+  <div class="card">
+    <h3>Win Rate by Coin / Timeframe / Mode
+      <button onclick="loadStats()" style="float:right;background:#238636;color:#fff;padding:4px 14px;border:none;border-radius:4px;cursor:pointer;font-size:11px">Refresh</button>
+    </h3>
+    <div id="statsSummary" style="display:flex;gap:24px;margin-bottom:12px;flex-wrap:wrap;font-size:13px"></div>
+    <table id="statsTable" style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="color:#8b949e;text-align:left;border-bottom:1px solid #30363d">
+          <th style="padding:6px">Coin</th>
+          <th style="padding:6px">TF</th>
+          <th style="padding:6px">Mode</th>
+          <th style="padding:6px">W</th>
+          <th style="padding:6px">L</th>
+          <th style="padding:6px">Win%</th>
+          <th style="padding:6px">PnL</th>
+        </tr>
+      </thead>
+      <tbody id="statsBody"><tr><td colspan="7" style="color:#8b949e;padding:8px">No trade data yet.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- AI Trading Agent -->
 <div class="section-pad">
   <div class="card">
@@ -712,6 +736,10 @@ setInterval(() => fetch('/state').then(r=>r.json()).then(d=>updateState(d)), 300
 // Keepalive ping every 5 minutes — prevents browser tab sleep and proxy idle timeouts
 setInterval(() => fetch('/ping').catch(()=>{}), 5 * 60 * 1000);
 
+// Auto-load stats on page load, then refresh every 60s
+loadStats();
+setInterval(loadStats, 60000);
+
 // Transaction Log
 async function loadTxLog() {
   const tbody = document.getElementById('txLog');
@@ -753,6 +781,37 @@ async function loadTxLog() {
 }
 
 // AI Analysis
+async function loadStats() {
+  try {
+    const d = await fetch('/stats').then(r => r.json());
+    const s = d.summary || {};
+    const pnlColor = (s.total_pnl || 0) >= 0 ? '#3fb950' : '#f85149';
+    document.getElementById('statsSummary').innerHTML = `
+      <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 12px">Trades: <b>${s.total_trades||0}</b></span>
+      <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 12px;color:#3fb950">Wins: <b>${s.wins||0}</b></span>
+      <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 12px;color:#f85149">Losses: <b>${s.losses||0}</b></span>
+      <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 12px">Win Rate: <b>${s.win_rate_pct||0}%</b></span>
+      <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 12px;color:${pnlColor}">PnL: <b>${(s.total_pnl||0)>=0?'+':''}$${s.total_pnl||0}</b></span>
+    `;
+    const rows = d.rows || [];
+    if (!rows.length) return;
+    document.getElementById('statsBody').innerHTML = rows.map(r => {
+      const wr = r.win_rate_pct;
+      const wrColor = wr >= 70 ? '#3fb950' : wr >= 50 ? '#e3b341' : '#f85149';
+      const pColor = r.pnl >= 0 ? '#3fb950' : '#f85149';
+      return `<tr style="border-bottom:1px solid #21262d">
+        <td style="padding:6px"><b>${r.coin}</b></td>
+        <td style="padding:6px;color:#8b949e">${r.timeframe}</td>
+        <td style="padding:6px;color:#8b949e">${r.mode}</td>
+        <td style="padding:6px;color:#3fb950">${r.wins}</td>
+        <td style="padding:6px;color:#f85149">${r.losses}</td>
+        <td style="padding:6px;color:${wrColor};font-weight:bold">${wr}%</td>
+        <td style="padding:6px;color:${pColor}">${r.pnl>=0?'+':''}$${r.pnl}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error('Stats load error', e); }
+}
+
 async function runAnalysis() {
   const btn = document.getElementById('analyzeBtn');
   const status = document.getElementById('aiStatus');
@@ -1147,6 +1206,16 @@ class ManualRedeemRequest(BaseModel):
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
+
+
+@app.get("/stats")
+async def get_stats():
+    """Win/loss stats per coin, timeframe and mode."""
+    bot = get_bot()
+    if not bot:
+        return {"summary": {}, "rows": []}
+    tracker = bot.structured_log.win_rate
+    return {"summary": tracker.summary(), "rows": tracker.get_stats()}
 
 
 @app.post("/redeem/all")

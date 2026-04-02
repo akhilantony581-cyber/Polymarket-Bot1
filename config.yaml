@@ -20,9 +20,9 @@ risk:
 
 # --- Price Rules ---
 price:
-  min_entry: 0.98                  # HARD FLOOR — never buy below this
+  min_entry: 0.97                  # HARD FLOOR — never buy below this (lowered from 0.98)
   standard_max: 0.979
-  sniper_min: 0.98
+  sniper_min: 0.97                 # Snipe 1 trigger threshold (was 0.99, now 0.97 for more trades)
 
 # --- Signal Engine ---
 signal:
@@ -67,6 +67,15 @@ markets:
     DOGE: "DOGEUSDT"
     BNB: "BNBUSDT"
     HYPE: "HYPEUSDT"
+
+# --- Momentum Gate (suggestions 2 & 4) ---
+# Blocks trades when Binance price is running against the direction being bought,
+# or when price has barely moved (too close to boundary to be confident).
+momentum_gate:
+  enabled: true
+  window_seconds: 30       # look-back window for momentum calculation
+  min_pct: -0.05           # allow up to -0.05% drift against direction before blocking
+  boundary_pct: 0.02       # skip if |30s momentum| < 0.02% (price undecided, skip unless <5s left)
 
 # --- Snipe 2 Mode (last 10 seconds, any price >= 0.95) ---
 snipe2:
