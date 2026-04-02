@@ -131,11 +131,14 @@ class OrderManager:
     ) -> Optional[ManagedPosition]:
 
         if mode == "snipe2":
-            # FOK (Fill or Kill) = market order: fills at best ask or cancels instantly
+            # FOK (Fill or Kill) = market order: fills at best ask or cancels instantly.
+            # Pass price as min_price so engine verifies the real token price hasn't
+            # dropped below the threshold between the scan check and submission.
             order = await self.execution.place_market_order(
                 token_id=market.trade_token_id,
                 market_id=market.market_id,
                 size=usdc_size,
+                min_price=price,
             )
         else:
             order = await self.execution.place_limit_order(
