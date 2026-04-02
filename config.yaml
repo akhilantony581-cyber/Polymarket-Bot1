@@ -57,13 +57,16 @@ order_book:
 
 # --- Markets ---
 markets:
-  coins: ["BTC", "ETH", "SOL", "XRP"]
+  coins: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
   timeframes: ["5m", "15m"]
   binance_symbols:
     BTC: "BTCUSDT"
     ETH: "ETHUSDT"
     SOL: "SOLUSDT"
     XRP: "XRPUSDT"
+    DOGE: "DOGEUSDT"
+    BNB: "BNBUSDT"
+    HYPE: "HYPEUSDT"
 
 # --- Execution ---
 execution:

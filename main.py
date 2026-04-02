@@ -387,7 +387,7 @@ class TradingBot:
 
     def _get_prices(self) -> dict:
         result = {}
-        for coin in ["BTC", "ETH", "SOL", "XRP"]:
+        for coin in ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]:
             bd = self.binance.get(coin)
             # Find Polymarket Up market for this coin (any timeframe)
             up_market = next(

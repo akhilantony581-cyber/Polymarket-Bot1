@@ -122,10 +122,13 @@ class PolymarketListener:
 
     # Slug prefixes used in Polymarket recurring series
     COIN_SLUGS = {
-        "BTC": "btc",
-        "ETH": "eth",
-        "SOL": "sol",
-        "XRP": "xrp",
+        "BTC":  "btc",
+        "ETH":  "eth",
+        "SOL":  "sol",
+        "XRP":  "xrp",
+        "DOGE": "doge",
+        "BNB":  "bnb",
+        "HYPE": "hype",
     }
 
     TIMEFRAME_SECONDS = {
@@ -135,8 +138,11 @@ class PolymarketListener:
 
     # Keep for legacy parsing fallback
     COIN_KEYWORDS = {
-        "BTC": ["bitcoin", "btc"],
-        "ETH": ["ethereum", "eth"],
+        "BTC":  ["bitcoin", "btc"],
+        "ETH":  ["ethereum", "eth"],
+        "DOGE": ["dogecoin", "doge"],
+        "BNB":  ["bnb", "binance coin"],
+        "HYPE": ["hype"],
         "SOL": ["solana", "sol"],
         "XRP": ["xrp", "ripple"],
     }
