@@ -152,11 +152,16 @@ DASHBOARD_HTML = """
   .tag-maker { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
   .win { color: #3fb950; } .loss { color: #f85149; }
   #log { height: 220px; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-size: 11px; }
+  .log-panel { max-height:300px; overflow-y:auto; font-size:12px; font-family:monospace; }
   .log-line { margin-bottom: 3px; }
   .log-line.info { color: #8b949e; }
   .log-line.trade { color: #3fb950; }
   .log-line.cancel { color: #e3b341; }
   .log-line.error { color: #f85149; }
+  .log-line.price { color: #58a6ff; }
+  .log-line.redeem { color: #d2a8ff; }
+  .log-tab { background:#21262d; border:1px solid #30363d; color:#8b949e; padding:4px 12px; border-radius:4px; cursor:pointer; font-size:11px; }
+  .log-tab.active { background:#388bfd22; border-color:#388bfd; color:#58a6ff; }
   .section-pad { padding: 0 16px 16px; }
   .divider { border: none; border-top: 1px solid #21262d; margin: 0 16px 16px; }
 </style>
@@ -389,7 +394,18 @@ DASHBOARD_HTML = """
 <div class="section-pad">
   <div class="card">
     <h3>Live Log</h3>
-    <div id="log"></div>
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button onclick="setTab('all')"     id="tab-all"     class="log-tab active">All</button>
+      <button onclick="setTab('prices')"  id="tab-prices"  class="log-tab">Prices (CLOB/Gamma)</button>
+      <button onclick="setTab('orders')"  id="tab-orders"  class="log-tab">Orders</button>
+      <button onclick="setTab('redeem')"  id="tab-redeem"  class="log-tab">Redeemed</button>
+      <button onclick="setTab('errors')"  id="tab-errors"  class="log-tab">Errors</button>
+    </div>
+    <div id="log-all"    class="log-panel" style="display:block"></div>
+    <div id="log-prices" class="log-panel" style="display:none"></div>
+    <div id="log-orders" class="log-panel" style="display:none"></div>
+    <div id="log-redeem" class="log-panel" style="display:none"></div>
+    <div id="log-errors" class="log-panel" style="display:none"></div>
   </div>
 </div>
 
@@ -496,17 +512,44 @@ function _updateStateInner(s) {
   }
 }
 
+let _activeTab = 'all';
+
+function setTab(tab) {
+  _activeTab = tab;
+  document.querySelectorAll('.log-panel').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('.log-tab').forEach(b => b.classList.remove('active'));
+  document.getElementById('log-' + tab).style.display = 'block';
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
 function appendLog(line) {
-  const log = document.getElementById('log');
-  const cls = line.includes('filled') || line.includes('WIN') ? 'trade' :
-              line.includes('cancel') ? 'cancel' :
-              line.includes('ERROR') ? 'error' : 'info';
-  const div = document.createElement('div');
-  div.className = `log-line ${cls}`;
-  div.textContent = `[${new Date().toLocaleTimeString()}] ${line}`;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-  if (log.children.length > 200) log.removeChild(log.firstChild);
+  const isPrices = line.includes('CLOB') || line.includes('Gamma') || line.includes('midpoint') ||
+                   line.includes('Market refresh') || line.includes('price') || line.includes('DIAG');
+  const isRedeem = line.includes('Redeem') || line.includes('redeem') || line.includes('redeemed');
+  const isOrder  = line.includes('Order') || line.includes('SNIPER') || line.includes('filled') ||
+                   line.includes('cancel') || line.includes('placed') || line.includes('submit');
+  const isError  = line.includes('ERROR') || line.includes('exception') || line.includes('failed');
+
+  const cls = isError ? 'error' : isRedeem ? 'redeem' : isOrder ? (line.includes('cancel') ? 'cancel' : 'trade') :
+              isPrices ? 'price' : 'info';
+
+  const panels = ['all'];
+  if (isPrices) panels.push('prices');
+  if (isOrder)  panels.push('orders');
+  if (isRedeem) panels.push('redeem');
+  if (isError)  panels.push('errors');
+
+  const time = `[${new Date().toLocaleTimeString()}] `;
+  panels.forEach(p => {
+    const panel = document.getElementById('log-' + p);
+    if (!panel) return;
+    const div = document.createElement('div');
+    div.className = `log-line ${cls}`;
+    div.textContent = time + line;
+    panel.appendChild(div);
+    panel.scrollTop = panel.scrollHeight;
+    if (panel.children.length > 300) panel.removeChild(panel.firstChild);
+  });
 }
 
 async function api(path, body) {
@@ -616,15 +659,7 @@ function updateState(s) {
 
 function updateLogs(logs) {
   if (!logs || !logs.length) return;
-  const log = document.getElementById('log');
-  const wasAtBottom = log.scrollHeight - log.scrollTop <= log.clientHeight + 10;
-  log.innerHTML = logs.map(l => {
-    const cls = l.msg.includes('FILL') || l.msg.includes('WIN') ? 'trade' :
-                l.msg.includes('cancel') || l.msg.includes('REJECTED') ? 'cancel' :
-                l.msg.includes('ERROR') || l.msg.includes('error') ? 'error' : 'info';
-    return `<div class="log-line ${cls}">[${l.t}] ${l.msg}</div>`;
-  }).join('');
-  if (wasAtBottom) log.scrollTop = log.scrollHeight;
+  logs.forEach(l => appendLog(l.msg));
 }
 
 // Poll state every 3s via HTTP as backup
