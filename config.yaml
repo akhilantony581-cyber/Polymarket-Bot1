@@ -98,7 +98,7 @@ snipe_1h:
   min_price: 0.89
   max_per_trade: 10.0
   max_per_market: 50.0
-  window_seconds: 600    # fire in last 10 minutes of the 1h market
+  window_seconds: 1500   # fire in last 25 minutes of the 1h market
 
 
 execution:
