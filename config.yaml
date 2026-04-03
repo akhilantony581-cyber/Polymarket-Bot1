@@ -79,7 +79,7 @@ market_maker:
   gap_cents: 0.02          # post 2¢ below current price on each side
   contracts_per_side: 10   # 10 contracts per order
   window_seconds: 150      # only fire within 150s of expiry
-  max_volatility: 0.5      # skip if 60s price std dev exceeds this (choppy market)
+  max_volatility_pct: 0.3  # skip if 60s std dev exceeds 0.3% of price (choppy market)
 
 # --- Momentum Gate (suggestions 2 & 4) ---
 # Blocks trades when Binance price is running against the direction being bought,

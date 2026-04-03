@@ -402,35 +402,29 @@ class TradingBot:
             # ── Reversal risk check — only place when direction is strongly confirmed ──
             bd = self.binance.get(market.coin)
             if not bd or not self.binance.is_ready(market.coin):
-                continue  # no Binance data = can't assess reversal risk, skip
+                continue
 
             buying_up = (side == "yes")
-            mom_30  = bd.momentum(30)
-            mom_60  = bd.momentum(60)
+            mom_60 = bd.momentum(60)
 
-            # Both momentum windows must agree with the winning direction
-            if mom_30 is None or mom_60 is None:
+            # 60s momentum must point in the winning direction
+            if mom_60 is None:
                 continue
-            if buying_up:
-                if mom_30 <= 0 or mom_60 <= 0:
-                    logger.debug(f"MM-BOTH skip {market.coin}: UP but mom30={mom_30:.3f}% mom60={mom_60:.3f}%")
-                    continue
-            else:
-                if mom_30 >= 0 or mom_60 >= 0:
-                    logger.debug(f"MM-BOTH skip {market.coin}: DOWN but mom30={mom_30:.3f}% mom60={mom_60:.3f}%")
-                    continue
-
-            # Price must be stable — no sharp counter-moves in last 30s
-            if not bd.is_stable(30):
-                logger.debug(f"MM-BOTH skip {market.coin}: price unstable (counter-moves detected)")
+            if buying_up and mom_60 <= 0:
+                logger.debug(f"MM-BOTH skip {market.coin}: UP but mom60={mom_60:.3f}%")
+                continue
+            if not buying_up and mom_60 >= 0:
+                logger.debug(f"MM-BOTH skip {market.coin}: DOWN but mom60={mom_60:.3f}%")
                 continue
 
-            # Volatility must be low — choppy markets can reverse fast
+            # Volatility check as % of price (not absolute dollars)
             vol = bd.volatility(60)
-            max_vol = mm.get("max_volatility", 0.5)  # configurable, default $0.50 std dev
-            if vol is not None and vol > max_vol:
-                logger.debug(f"MM-BOTH skip {market.coin}: volatility too high vol={vol:.4f}")
-                continue
+            max_vol_pct = mm.get("max_volatility_pct", 0.3)  # 0.3% std dev over 60s
+            if vol is not None and bd.price > 0:
+                vol_pct = (vol / bd.price) * 100
+                if vol_pct > max_vol_pct:
+                    logger.debug(f"MM-BOTH skip {market.coin}: vol={vol_pct:.3f}% > {max_vol_pct}%")
+                    continue
 
             # ── Prices ─────────────────────────────────────────────────────
             win_price  = round(max(0.01, price - mm_gap), 2)
