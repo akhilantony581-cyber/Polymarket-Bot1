@@ -68,6 +68,18 @@ markets:
     BNB: "BNBUSDT"
     HYPE: "HYPEUSDT"
 
+# --- Market Maker Both-Sides ---
+# Places GTC limit buy orders on both winning and losing sides when
+# the winning price is 0.90-0.97. No taker fees on limit orders.
+# Both sides together must sum to < 0.97 (3% profit margin guaranteed).
+market_maker:
+  enabled: true
+  min_price: 0.90          # winning side must be at least this
+  max_price: 0.97          # sniper handles above this
+  gap_cents: 0.02          # post 2¢ below current price on each side
+  contracts_per_side: 10   # 10 contracts per order
+  window_seconds: 150      # only fire within 150s of expiry
+
 # --- Momentum Gate (suggestions 2 & 4) ---
 # Blocks trades when Binance price is running against the direction being bought,
 # or when price has barely moved (too close to boundary to be confident).

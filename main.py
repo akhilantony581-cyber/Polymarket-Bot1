@@ -16,7 +16,7 @@ from binance_feed import BinanceFeed
 from polymarket_listener import PolymarketListener
 from signal_engine import SignalEngine, TradeMode
 from execution_engine import ExecutionEngine
-from order_manager import OrderManager
+from order_manager import OrderManager, ManagedPosition
 from risk_manager import RiskManager
 from structured_logger import StructuredLogger
 
@@ -151,8 +151,9 @@ class TradingBot:
         while self._running:
             try:
                 await self._scan_markets()
+                await self._scan_maker_both_sides()
                 _diag_tick += 1
-                if _diag_tick % 30 == 0:  # Log diagnostics every ~30 seconds
+                if _diag_tick % 30 == 0:
                     await self._log_diagnostics()
             except Exception as e:
                 logger.error(f"Trading loop error: {e}", exc_info=True)
@@ -367,6 +368,97 @@ class TradingBot:
 
         if s2_qualifying:
             await asyncio.gather(*[_submit_snipe2(m, s, p, sz) for m, s, p, sz in s2_qualifying])
+
+    # ------------------------------------------------------------------
+    # MARKET MAKER — both sides, 10 contracts, price 0.90–0.97
+    # ------------------------------------------------------------------
+    async def _scan_maker_both_sides(self):
+        mm = self.config.get("market_maker", {})
+        if not mm.get("enabled", True):
+            return
+
+        mm_min     = mm.get("min_price", 0.90)    # winning side must be >= this
+        mm_max     = mm.get("max_price", 0.97)    # sniper takes over above this
+        mm_gap     = mm.get("gap_cents", 0.02)    # post this far below current price
+        mm_conts   = mm.get("contracts_per_side", 10)
+        mm_window  = mm.get("window_seconds", 150)
+        max_per_market = self.config["capital"].get("max_per_market", 40.0)
+
+        for market in list(self.poly_listener.markets.values()):
+            if market.is_expired:
+                continue
+            if market.seconds_to_expiry > mm_window:
+                continue
+
+            side, price = market.best_trade_side
+            if price < mm_min or price >= mm_max:
+                continue
+
+            # Skip if sniper already has an order on this market
+            if self._market_has_active_order(market.market_id):
+                continue
+
+            # Shared $40 cap with sniper
+            exposure = self._market_exposure(market.market_id)
+            if exposure >= max_per_market:
+                continue
+
+            # ── Derive both-side limit prices ──────────────────────────────
+            # Winning side: post mm_gap below current price (queue as maker)
+            win_price  = round(max(0.01, price - mm_gap), 2)
+            # Losing side: complement minus mm_gap (very cheap, 0.05-0.08 range)
+            lose_price = round(max(0.01, (1.0 - price) - mm_gap), 2)
+
+            # Only proceed if combined cost leaves a profit margin
+            if win_price + lose_price >= 0.97:
+                continue
+
+            win_usdc  = round(win_price  * mm_conts, 2)
+            lose_usdc = round(lose_price * mm_conts, 2)
+            total_usdc = win_usdc + lose_usdc
+
+            if exposure + total_usdc > max_per_market:
+                continue
+
+            can, _ = self.risk_manager.can_trade(self.order_manager.active_count)
+            if not can:
+                continue
+
+            # Winning token ID
+            win_token  = market.trade_token_id
+            lose_token = market.no_token_id if side == "yes" else market.yes_token_id
+
+            logger.info(
+                f"MAKER-BOTH [{market.coin} {market.timeframe}] "
+                f"{side.upper()}@{win_price:.2f} + {'DOWN' if side=='yes' else 'UP'}@{lose_price:.2f} "
+                f"x{mm_conts} contracts | tte={market.seconds_to_expiry:.0f}s "
+                f"margin={(1.0-win_price-lose_price)*100:.1f}%"
+            )
+
+            # Submit both sides simultaneously as GTC limit orders
+            async def _place_win(m=market, t=win_token, p=win_price, s=win_usdc):
+                pos = await self.order_manager.submit(
+                    market=m, price=p, usdc_size=s, mode="maker"
+                )
+                if pos:
+                    self.risk_manager.record_trade_open(pos)
+
+            async def _place_lose(m=market, t=lose_token, p=lose_price, s=lose_usdc):
+                # Use place_limit_order directly so we can specify the losing token ID
+                order = await self.execution.place_limit_order(
+                    token_id=t, market_id=m.market_id,
+                    price=p, size=s, mode="manual"
+                )
+                if order:
+                    pos = ManagedPosition(
+                        order=order, market=m, mode="maker",
+                        entry_usdc=s, entry_price=p,
+                    )
+                    self.order_manager.active_orders[order.order_id] = pos
+                    asyncio.create_task(self.order_manager._monitor_order(pos))
+                    self.risk_manager.record_trade_open(pos)
+
+            await asyncio.gather(_place_win(), _place_lose())
 
     async def _execute_trade(self, market, signal, size: float):
         mode = signal.mode.value
