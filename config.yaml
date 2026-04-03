@@ -11,7 +11,7 @@ capital:
   max_per_market: 20.0
 
 risk:
-  consecutive_loss_limit: 3        # Stop trading after 3 consecutive losses
+  consecutive_loss_limit: 999      # Effectively disabled — bot runs continuously
   volatility_spike_threshold: 2.5  # Stop if rolling std dev exceeds this multiplier
   kelly:
     score_95_100: 0.15             # 15% of capital

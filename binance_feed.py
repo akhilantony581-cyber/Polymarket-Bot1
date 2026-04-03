@@ -148,11 +148,17 @@ class BinanceFeed:
         logger.info(f"BinanceFeed connecting to {base_url}")
         async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
             self._ws = ws
+            self._last_msg_time = time.time()
             logger.info("BinanceFeed connected")
             async for raw in ws:
                 if not self._running:
                     break
+                self._last_msg_time = time.time()
                 self._handle_message(raw)
+                # Stale check: if no message for 60s, force reconnect
+                if time.time() - self._last_msg_time > 60:
+                    logger.warning("BinanceFeed stale (no data 60s) — forcing reconnect")
+                    break
 
     def _handle_message(self, raw: str):
         try:
