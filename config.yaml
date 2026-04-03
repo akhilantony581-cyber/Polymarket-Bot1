@@ -7,8 +7,8 @@ capital:
   total: 150.0
   max_concurrent_trades: 500
   maker_allocation_pct: 0.30
-  max_per_trade: 10.0
-  max_per_market: 50.0
+  max_per_trade: 20.0
+  max_per_market: 20.0
 
 risk:
   consecutive_loss_limit: 999      # Effectively disabled — bot runs continuously
@@ -20,9 +20,9 @@ risk:
 
 # --- Price Rules ---
 price:
-  min_entry: 0.89                  # HARD FLOOR — never buy below this
+  min_entry: 0.97                  # HARD FLOOR — never buy below this
   standard_max: 0.979
-  sniper_min: 0.89                 # Snipe 1 trigger threshold
+  sniper_min: 0.97                 # Snipe 1 trigger threshold (5m/15m)
 
 # --- Signal Engine ---
 signal:
@@ -58,7 +58,7 @@ order_book:
 # --- Markets ---
 markets:
   coins: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
-  timeframes: ["1h"]
+  timeframes: ["5m", "15m", "1h"]
   binance_symbols:
     BTC: "BTCUSDT"
     ETH: "ETHUSDT"
@@ -87,10 +87,18 @@ momentum_gate:
 # --- Snipe 2 Mode (last 10 seconds, any price >= 0.95) ---
 snipe2:
   enabled: true
+  min_price: 0.95
+  max_per_trade: 20.0
+  max_per_market: 20.0
+  window_seconds: 10
+
+# --- 1h Sniper (separate settings from 5m/15m) ---
+snipe_1h:
+  enabled: true
   min_price: 0.89
   max_per_trade: 10.0
   max_per_market: 50.0
-  window_seconds: 10
+  window_seconds: 600    # fire in last 10 minutes of the 1h market
 
 
 execution:

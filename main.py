@@ -191,7 +191,7 @@ class TradingBot:
 
         # Find best candidates and why they're blocked
         sniper_min = self.config.get("price", {}).get("sniper_min", 0.97)
-        near_expiry = [m for m in markets if not m.is_expired and m.seconds_to_expiry <= 600]
+        near_expiry = [m for m in markets if not m.is_expired and m.seconds_to_expiry <= 150]
         qualifying_price = [m for m in near_expiry if m.best_trade_side[1] >= sniper_min]
 
         top = sorted(
@@ -223,26 +223,46 @@ class TradingBot:
         mg_min_pct  = mg.get("min_pct", -0.05)    # allow up to -0.05% drift against direction
         mg_boundary = mg.get("boundary_pct", 0.02) # skip if |momentum| < 0.02% (undecided)
 
+        # 1h sniper config (separate settings)
+        s1h = self.config.get("snipe_1h", {})
+        s1h_enabled    = s1h.get("enabled", True)
+        s1h_min_price  = s1h.get("min_price", 0.89)
+        s1h_max_trade  = s1h.get("max_per_trade", 10.0)
+        s1h_max_market = s1h.get("max_per_market", 50.0)
+        s1h_window     = s1h.get("window_seconds", 600)
+
         qualifying = []
         for market in list(self.poly_listener.markets.values()):
             if market.is_expired:
                 continue
 
-            # trade windows: 1h=600s, 15m=150s, 5m=150s
-            tf_windows = {"1h": 600, "15m": 150, "5m": 150}
-            window = tf_windows.get(market.timeframe, 150)
-            if market.seconds_to_expiry > window:
+            # Route 1h markets to their own settings
+            if market.timeframe == "1h":
+                if not s1h_enabled:
+                    continue
+                tf_window   = s1h_window
+                tf_min      = s1h_min_price
+                tf_max_trade  = s1h_max_trade
+                tf_max_market = s1h_max_market
+            else:
+                # 5m / 15m — original settings
+                tf_window   = 150 if market.timeframe == "5m" else 90
+                tf_min      = sniper_min
+                tf_max_trade  = max_per_trade
+                tf_max_market = max_per_market
+
+            if market.seconds_to_expiry > tf_window:
                 continue
 
             side, price = market.best_trade_side
 
             # Fresh CLOB fetch when approaching threshold
-            if price < (sniper_min + 0.05) and market.seconds_to_expiry <= window:
+            if price < (tf_min + 0.05) and market.seconds_to_expiry <= tf_window:
                 await self.poly_listener._fetch_clob_prices_for_market(market)
                 side, price = market.best_trade_side
 
             price = min(price, 0.99)
-            if price < sniper_min:
+            if price < tf_min:
                 continue
 
             # ── Momentum gate (suggestions 2 & 4) ──────────────────────────
@@ -251,9 +271,8 @@ class TradingBot:
                 binance_ready = bd and self.binance.is_ready(market.coin)
 
                 if not binance_ready:
-                    # No Binance data for this coin (e.g. HYPE not on Binance).
-                    # Fall back to strict threshold — only take near-certain outcomes.
-                    strict = min(0.97, sniper_min + 0.05)
+                    # No Binance data — fall back to strict threshold
+                    strict = min(0.97, tf_min + 0.05)
                     if price < strict:
                         logger.debug(
                             f"No Binance data for {market.coin} — "
@@ -264,7 +283,6 @@ class TradingBot:
                     mom = bd.momentum(mg_window)
                     if mom is not None:
                         buying_up = (side == "yes")
-                        # Require momentum to be actively in our favour (not just "not bad")
                         if buying_up and mom < mg_min_pct:
                             logger.debug(
                                 f"Momentum gate SKIP {market.coin} {market.timeframe} "
@@ -277,7 +295,6 @@ class TradingBot:
                                 f"DOWN blocked mom={mom:.3f}%"
                             )
                             continue
-                        # Near-boundary skip: momentum too weak to confirm direction
                         if market.seconds_to_expiry > 5 and abs(mom) < mg_boundary:
                             logger.debug(
                                 f"Boundary skip {market.coin} {market.timeframe} "
@@ -289,15 +306,14 @@ class TradingBot:
                 continue
 
             market_exposure = self._market_exposure(market.market_id)
-            if market_exposure >= max_per_market:
+            if market_exposure >= tf_max_market:
                 continue
 
             can, reason = self.risk_manager.can_trade(self.order_manager.active_count + len(qualifying))
             if not can:
                 break
 
-            # Kelly-scaled size: larger bet the higher the probability
-            kelly_size = self._kelly_size(price, sniper_min, max_per_trade)
+            kelly_size = self._kelly_size(price, tf_min, tf_max_trade)
             qualifying.append((market, side, price, kelly_size))
 
         if not qualifying:
@@ -345,9 +361,8 @@ class TradingBot:
                 binance_ready = bd and self.binance.is_ready(market.coin)
                 if not binance_ready:
                     # No Binance data — require stricter price floor for snipe2 too
-                    s2_strict = min(0.95, s2_min_price + 0.04)
-                    if price < s2_strict:
-                        logger.debug(f"S2 no Binance data for {market.coin}, price {price:.4f} < {s2_strict:.2f}, skipping")
+                    if price < 0.98:
+                        logger.debug(f"S2 no Binance data for {market.coin}, price {price:.4f} < 0.98, skipping")
                         continue
                 else:
                     mom = bd.momentum(15)  # shorter window for last-10s trades
