@@ -128,10 +128,10 @@ class TradingBot:
                 await asyncio.sleep(3)
 
     # ------------------------------------------------------------------
-    # PULSE — toggles max_per_trade 20→21→20 every 5 min to stay active
+    # PULSE — toggles max_per_trade base→base+1→base every 5 min to stay active
     # ------------------------------------------------------------------
     async def _pulse_loop(self):
-        base = self.config["capital"].get("max_per_trade", 20.0)
+        base = self.config["capital"].get("max_per_trade", 10.0)
         while self._running:
             self.config["capital"]["max_per_trade"] = base + 1
             await asyncio.sleep(300)
@@ -191,7 +191,7 @@ class TradingBot:
 
         # Find best candidates and why they're blocked
         sniper_min = self.config.get("price", {}).get("sniper_min", 0.97)
-        near_expiry = [m for m in markets if not m.is_expired and m.seconds_to_expiry <= 150]
+        near_expiry = [m for m in markets if not m.is_expired and m.seconds_to_expiry <= 600]
         qualifying_price = [m for m in near_expiry if m.best_trade_side[1] >= sniper_min]
 
         top = sorted(
@@ -228,15 +228,16 @@ class TradingBot:
             if market.is_expired:
                 continue
 
-            # 5m markets: trade within 150s of expiry; 15m markets: 90s
-            window = 150 if market.timeframe == "5m" else 90
+            # trade windows: 1h=600s, 15m=150s, 5m=150s
+            tf_windows = {"1h": 600, "15m": 150, "5m": 150}
+            window = tf_windows.get(market.timeframe, 150)
             if market.seconds_to_expiry > window:
                 continue
 
             side, price = market.best_trade_side
 
             # Fresh CLOB fetch when approaching threshold
-            if 0.90 <= price < (sniper_min + 0.03) and market.seconds_to_expiry <= 300:
+            if price < (sniper_min + 0.05) and market.seconds_to_expiry <= window:
                 await self.poly_listener._fetch_clob_prices_for_market(market)
                 side, price = market.best_trade_side
 
@@ -252,10 +253,11 @@ class TradingBot:
                 if not binance_ready:
                     # No Binance data for this coin (e.g. HYPE not on Binance).
                     # Fall back to strict threshold — only take near-certain outcomes.
-                    if price < 0.99:
+                    strict = min(0.97, sniper_min + 0.05)
+                    if price < strict:
                         logger.debug(
                             f"No Binance data for {market.coin} — "
-                            f"requiring 0.99, got {price:.4f}, skipping"
+                            f"requiring {strict:.2f}, got {price:.4f}, skipping"
                         )
                         continue
                 else:
@@ -343,8 +345,9 @@ class TradingBot:
                 binance_ready = bd and self.binance.is_ready(market.coin)
                 if not binance_ready:
                     # No Binance data — require stricter price floor for snipe2 too
-                    if price < 0.98:
-                        logger.debug(f"S2 no Binance data for {market.coin}, price {price:.4f} < 0.98, skipping")
+                    s2_strict = min(0.95, s2_min_price + 0.04)
+                    if price < s2_strict:
+                        logger.debug(f"S2 no Binance data for {market.coin}, price {price:.4f} < {s2_strict:.2f}, skipping")
                         continue
                 else:
                     mom = bd.momentum(15)  # shorter window for last-10s trades

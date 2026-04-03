@@ -134,6 +134,7 @@ class PolymarketListener:
     TIMEFRAME_SECONDS = {
         "5m":  300,
         "15m": 900,
+        "1h":  3600,
     }
 
     # Keep for legacy parsing fallback
@@ -150,6 +151,7 @@ class PolymarketListener:
     TIMEFRAME_KEYWORDS = {
         "5m":  ["5-minute", "5 minute", "5min", "5m", "5 min", "300s", "5-min"],
         "15m": ["15-minute", "15 minute", "15min", "15m", "15 min", "900s", "15-min"],
+        "1h":  ["1-hour", "1 hour", "1hour", "1h", "60m", "60-minute", "3600s"],
     }
 
     def __init__(self, config: dict):
@@ -216,10 +218,10 @@ class PolymarketListener:
 
     async def _refresh_markets(self):
         """
-        Fetch crypto 5m/15m markets by constructing their deterministic slugs.
+        Fetch crypto 5m/15m/1h markets by constructing their deterministic slugs.
         Polymarket recurring markets follow: {coin}-updown-{tf}-{epoch}
         where epoch is the Unix timestamp of the window start, aligned to
-        the timeframe (5m=300s, 15m=900s).
+        the timeframe (5m=300s, 15m=900s, 1h=3600s).
         We fetch current + next window for each coin/timeframe pair.
         """
         import json as _json
