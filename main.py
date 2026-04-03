@@ -104,6 +104,7 @@ class TradingBot:
             self._supervise(self._config_watcher, "config_watcher"),
             self._supervise(self._keepalive_loop, "keepalive_loop"),
             self._supervise(self._watchdog_loop, "watchdog_loop"),
+            self._supervise(self._pulse_loop, "pulse_loop"),
         )
 
     async def stop(self):
@@ -125,6 +126,17 @@ class TradingBot:
             except Exception as e:
                 logger.error(f"[WATCHDOG] {name} crashed: {e} — restarting in 3s", exc_info=True)
                 await asyncio.sleep(3)
+
+    # ------------------------------------------------------------------
+    # PULSE — toggles max_per_trade 20→21→20 every 5 min to stay active
+    # ------------------------------------------------------------------
+    async def _pulse_loop(self):
+        base = self.config["capital"].get("max_per_trade", 20.0)
+        while self._running:
+            self.config["capital"]["max_per_trade"] = base + 1
+            await asyncio.sleep(300)
+            self.config["capital"]["max_per_trade"] = base
+            await asyncio.sleep(300)
 
     # ------------------------------------------------------------------
     # WATCHDOG — detects stalls and auto-recovers
