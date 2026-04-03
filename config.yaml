@@ -4,11 +4,11 @@
 
 # --- Capital & Risk ---
 capital:
-  total: 100.0
+  total: 140.0
   max_concurrent_trades: 5          # limit concurrent exposure
   maker_allocation_pct: 0.30
-  max_per_trade: 5.0                # max 5% of capital per trade (was $20)
-  max_per_market: 10.0              # max 10% per market (was $40)
+  max_per_trade: 7.0                # 5% of capital per trade
+  max_per_market: 14.0              # 10% per market
 
 risk:
   consecutive_loss_limit: 3        # Stop trading after 3 consecutive losses
