@@ -394,11 +394,7 @@ class TradingBot:
             if price < mm_min or price >= mm_max:
                 continue
 
-            # Skip if sniper already has an order on this market
-            if self._market_has_active_order(market.market_id):
-                continue
-
-            # Shared $40 cap with sniper
+            # Shared $40 cap with sniper (repeats allowed until cap is hit)
             exposure = self._market_exposure(market.market_id)
             if exposure >= max_per_market:
                 continue
@@ -436,14 +432,11 @@ class TradingBot:
                 logger.debug(f"MM-BOTH skip {market.coin}: volatility too high vol={vol:.4f}")
                 continue
 
-            # ── Derive both-side limit prices ──────────────────────────────
-            # Winning side: post mm_gap below current price (queue as maker)
+            # ── Prices ─────────────────────────────────────────────────────
             win_price  = round(max(0.01, price - mm_gap), 2)
-            # Losing side: complement minus mm_gap (very cheap, 0.05-0.08 range)
             lose_price = round(max(0.01, (1.0 - price) - mm_gap), 2)
-
-            win_usdc  = round(win_price  * mm_conts, 2)
-            lose_usdc = round(lose_price * mm_conts, 2)
+            win_usdc   = round(win_price  * mm_conts, 2)
+            lose_usdc  = round(lose_price * mm_conts, 2)
             total_usdc = win_usdc + lose_usdc
 
             if exposure + total_usdc > max_per_market:
@@ -453,41 +446,45 @@ class TradingBot:
             if not can:
                 continue
 
-            # Winning token ID
             win_token  = market.trade_token_id
             lose_token = market.no_token_id if side == "yes" else market.yes_token_id
 
             logger.info(
                 f"MAKER-BOTH [{market.coin} {market.timeframe}] "
-                f"{side.upper()}@{win_price:.2f} + {'DOWN' if side=='yes' else 'UP'}@{lose_price:.2f} "
-                f"x{mm_conts} contracts | tte={market.seconds_to_expiry:.0f}s "
-                f"margin={(1.0-win_price-lose_price)*100:.1f}%"
+                f"WIN {side.upper()}@{win_price:.2f} x{mm_conts} → "
+                f"INSURANCE {'DOWN' if side=='yes' else 'UP'}@{lose_price:.2f} x{mm_conts} "
+                f"| tte={market.seconds_to_expiry:.0f}s"
             )
 
-            # Submit both sides simultaneously as GTC limit orders
-            async def _place_win(m=market, t=win_token, p=win_price, s=win_usdc):
-                pos = await self.order_manager.submit(
-                    market=m, price=p, usdc_size=s, mode="maker"
-                )
-                if pos:
-                    self.risk_manager.record_trade_open(pos)
+            # Step 1 — buy winning side first
+            win_order = await self.execution.place_limit_order(
+                token_id=win_token, market_id=market.market_id,
+                price=win_price, size=win_usdc, mode="manual"
+            )
+            if not win_order:
+                continue  # winning side failed — don't place insurance
 
-            async def _place_lose(m=market, t=lose_token, p=lose_price, s=lose_usdc):
-                # Use place_limit_order directly so we can specify the losing token ID
-                order = await self.execution.place_limit_order(
-                    token_id=t, market_id=m.market_id,
-                    price=p, size=s, mode="manual"
-                )
-                if order:
-                    pos = ManagedPosition(
-                        order=order, market=m, mode="maker",
-                        entry_usdc=s, entry_price=p,
-                    )
-                    self.order_manager.active_orders[order.order_id] = pos
-                    asyncio.create_task(self.order_manager._monitor_order(pos))
-                    self.risk_manager.record_trade_open(pos)
+            win_pos = ManagedPosition(
+                order=win_order, market=market, mode="maker",
+                entry_usdc=win_usdc, entry_price=win_price,
+            )
+            self.order_manager.active_orders[win_order.order_id] = win_pos
+            asyncio.create_task(self.order_manager._monitor_order(win_pos))
+            self.risk_manager.record_trade_open(win_pos)
 
-            await asyncio.gather(_place_win(), _place_lose())
+            # Step 2 — place insurance on losing side only after winning side is submitted
+            lose_order = await self.execution.place_limit_order(
+                token_id=lose_token, market_id=market.market_id,
+                price=lose_price, size=lose_usdc, mode="manual"
+            )
+            if lose_order:
+                lose_pos = ManagedPosition(
+                    order=lose_order, market=market, mode="maker",
+                    entry_usdc=lose_usdc, entry_price=lose_price,
+                )
+                self.order_manager.active_orders[lose_order.order_id] = lose_pos
+                asyncio.create_task(self.order_manager._monitor_order(lose_pos))
+                self.risk_manager.record_trade_open(lose_pos)
 
     async def _execute_trade(self, market, signal, size: float):
         mode = signal.mode.value
