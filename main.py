@@ -244,12 +244,14 @@ class TradingBot:
                 tf_min      = s1h_min_price
                 tf_max_trade  = s1h_max_trade
                 tf_max_market = s1h_max_market
-            else:
-                # 5m / 15m — original settings
-                tf_window   = 150 if market.timeframe == "5m" else 90
+            elif market.timeframe == "15m":
+                tf_window   = 180
                 tf_min      = sniper_min
                 tf_max_trade  = max_per_trade
                 tf_max_market = max_per_market
+            else:
+                # 5m — disabled
+                continue
 
             if market.seconds_to_expiry > tf_window:
                 continue

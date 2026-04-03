@@ -58,7 +58,7 @@ order_book:
 # --- Markets ---
 markets:
   coins: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
-  timeframes: ["5m", "15m", "1h"]
+  timeframes: ["15m", "1h"]
   binance_symbols:
     BTC: "BTCUSDT"
     ETH: "ETHUSDT"
