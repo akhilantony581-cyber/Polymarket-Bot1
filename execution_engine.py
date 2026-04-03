@@ -241,6 +241,72 @@ class ExecutionEngine:
             return None
 
     # ------------------------------------------------------------------
+    # PLACE MAKER ORDER (FOK) — fills immediately or cancels, no resting in book
+    # Returns (PlacedOrder, fill_price) or (None, None)
+    # ------------------------------------------------------------------
+    async def place_maker_order(
+        self,
+        token_id: str,
+        market_id: str,
+        price: float,          # the target price (e.g. win_price)
+        size: float,           # USDC amount
+        min_fill_price: float, # abort if fill price drops below this
+        mode: str = "maker",
+    ):
+        """
+        FOK order for market maker win side.
+        - Uses FOK so it fills at current ask or cancels — never rests in book.
+        - Checks fresh midpoint before submitting; aborts if below min_fill_price.
+        - Returns (PlacedOrder, actual_price) or (None, None).
+        """
+        if not self._clob:
+            logger.error("No CLOB client")
+            return None, None
+
+        # Fresh price check — reject if market has moved away
+        try:
+            resp = await self._http.get(f"{CLOB_BASE}/midpoint", params={"token_id": token_id})
+            fresh_mid = float(resp.json().get("mid", 0))
+            if fresh_mid > 0 and fresh_mid < min_fill_price:
+                logger.warning(
+                    f"MAKER aborted: fresh midpoint {fresh_mid:.4f} < min_fill_price {min_fill_price:.4f}"
+                )
+                return None, None
+        except Exception as e:
+            logger.debug(f"MAKER pre-flight check failed: {e}")
+
+        try:
+            shares = round(size / price, 6)
+            order_args = OrderArgs(token_id=token_id, price=price, size=shares, side="BUY")
+            signed_order = self._clob.create_order(order_args)
+            resp = self._clob.post_order(signed_order, OrderType.FOK)
+            order_id = resp.get("orderID") or resp.get("order_id", "")
+            if not order_id:
+                logger.info(f"MAKER FOK did not fill (no order ID): {resp}")
+                return None, None
+
+            # Estimate actual fill price from response if available, else use posted price
+            fill_price = float(resp.get("price", price))
+
+            order = PlacedOrder(
+                order_id=order_id,
+                market_id=market_id,
+                token_id=token_id,
+                side="buy",
+                price=fill_price,
+                size=shares,
+                mode=mode,
+            )
+            logger.info(
+                f"MAKER FOK filled {order_id} price={fill_price:.4f} "
+                f"shares={shares:.4f} market={market_id[:16]}..."
+            )
+            return order, fill_price
+        except Exception as e:
+            logger.error(f"MAKER order failed: {e}")
+            return None, None
+
+    # ------------------------------------------------------------------
     # CANCEL ORDER
     # ------------------------------------------------------------------
     async def cancel_order(self, order: PlacedOrder) -> bool:

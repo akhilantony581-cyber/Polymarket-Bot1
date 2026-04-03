@@ -457,30 +457,48 @@ class TradingBot:
             win_token  = market.trade_token_id
             lose_token = market.no_token_id if side == "yes" else market.yes_token_id
 
+            # min_fill_price: reject if market has slipped more than 5 cents below target
+            min_fill = round(win_price - 0.05, 2)
+
             logger.info(
                 f"MAKER-BOTH [{market.coin} {market.timeframe}] "
-                f"WIN {side.upper()}@{win_price:.2f} x{mm_conts} → "
+                f"WIN {side.upper()}@{win_price:.2f} (min_fill={min_fill:.2f}) x{mm_conts} → "
                 f"INSURANCE {'DOWN' if side=='yes' else 'UP'}@{lose_price:.2f} x{mm_conts} "
                 f"| tte={market.seconds_to_expiry:.0f}s"
             )
 
-            # Step 1 — buy winning side first
-            win_order = await self.execution.place_limit_order(
+            # Step 1 — FOK on winning side; cancels instantly if not filled at a good price
+            win_order, fill_price = await self.execution.place_maker_order(
                 token_id=win_token, market_id=market.market_id,
-                price=win_price, size=win_usdc, mode="manual"
+                price=win_price, size=win_usdc,
+                min_fill_price=min_fill, mode="maker"
             )
             if not win_order:
-                continue  # winning side failed — don't place insurance
+                continue  # didn't fill — skip insurance entirely
+
+            # Extra guard: if fill price came back worse than min_fill, abort insurance
+            if fill_price is not None and fill_price < min_fill:
+                logger.warning(
+                    f"MAKER win filled at {fill_price:.4f} < min_fill {min_fill:.2f} — skipping insurance"
+                )
+                win_pos = ManagedPosition(
+                    order=win_order, market=market, mode="maker",
+                    entry_usdc=win_usdc, entry_price=fill_price,
+                )
+                self.order_manager.active_orders[win_order.order_id] = win_pos
+                asyncio.create_task(self.order_manager._monitor_order(win_pos))
+                self.risk_manager.record_trade_open(win_pos)
+                continue
 
             win_pos = ManagedPosition(
                 order=win_order, market=market, mode="maker",
-                entry_usdc=win_usdc, entry_price=win_price,
+                entry_usdc=win_usdc, entry_price=fill_price or win_price,
             )
             self.order_manager.active_orders[win_order.order_id] = win_pos
             asyncio.create_task(self.order_manager._monitor_order(win_pos))
             self.risk_manager.record_trade_open(win_pos)
 
-            # Step 2 — place insurance on losing side only after winning side is submitted
+            # Step 2 — insurance only placed after win confirmed at acceptable price
             lose_order = await self.execution.place_limit_order(
                 token_id=lose_token, market_id=market.market_id,
                 price=lose_price, size=lose_usdc, mode="manual"
