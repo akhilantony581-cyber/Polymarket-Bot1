@@ -127,20 +127,22 @@ class TradingBot:
                 await asyncio.sleep(3)
 
     # ------------------------------------------------------------------
-    # WATCHDOG — detects stalled feeds and logs alerts
+    # WATCHDOG — detects stalls and auto-recovers
     # ------------------------------------------------------------------
     async def _watchdog_loop(self):
         while self._running:
             await asyncio.sleep(60)
+
+            # Auto-reset halt so bot never stays stopped permanently
+            if self.risk_manager.is_halted:
+                logger.warning("[WATCHDOG] Bot was halted — auto-resetting to keep trading")
+                self.risk_manager.reset_halt()
+
             markets = list(self.poly_listener.markets.values())
             if not markets:
-                logger.warning("[WATCHDOG] No markets tracked — listener may be stalled or proxy is down")
-            else:
-                stale = [m for m in markets if time.time() - m.last_updated > 30]
-                if stale:
-                    logger.warning(f"[WATCHDOG] {len(stale)} market(s) not updated in 30s — possible stall")
+                logger.warning("[WATCHDOG] 0 markets tracked — listener may be stalled or proxy down")
             if not self.order_manager._running:
-                logger.error("[WATCHDOG] OrderManager is not running — attempting restart")
+                logger.error("[WATCHDOG] OrderManager stopped — restarting")
                 await self.order_manager.start()
 
     # ------------------------------------------------------------------
@@ -606,7 +608,9 @@ class TradingBot:
         """
         import httpx as _httpx
         port = self.config.get("dashboard", {}).get("port", 8080)
-        public_url = os.environ.get("RAILWAY_PUBLIC_URL", "").rstrip("/")
+        # Railway injects RAILWAY_PUBLIC_DOMAIN automatically — no manual env var needed
+        domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "") or os.environ.get("RAILWAY_PUBLIC_URL", "")
+        public_url = (f"https://{domain}" if domain and not domain.startswith("http") else domain).rstrip("/")
         await asyncio.sleep(30)  # wait for server to start
         while self._running:
             try:

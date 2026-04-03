@@ -201,6 +201,7 @@ DASHBOARD_HTML = """
     <div class="btn-row">
       <button class="btn-pause" onclick="pauseBot()">⏸ Pause New Trades</button>
       <button class="btn-resume" onclick="resumeBot()">▶ Resume</button>
+      <button onclick="wakeBot()" style="background:#1f6feb;color:#fff;border:none;border-radius:6px;padding:8px 18px;cursor:pointer;font-weight:bold">⚡ Wake Bot</button>
     </div>
     <div class="btn-row" style="margin-top:8px">
       <button class="btn-halt" onclick="haltBot()">🛑 Emergency Halt</button>
@@ -621,6 +622,7 @@ function pauseBot() { api('/control/pause', {}); }
 function resumeBot() { api('/control/resume', {}); }
 function haltBot() { if(confirm('Emergency halt all trading?')) api('/control/halt', {}); }
 function resetHalt() { api('/control/reset_halt', {}); }
+function wakeBot() { api('/control/wake', {}); }
 
 function savePriceSettings() {
   api('/settings/price', {
@@ -971,6 +973,17 @@ async def reset_halt():
         raise HTTPException(503, "Bot not running")
     bot.risk_manager.reset_halt()
     return {"message": "Halt reset — bot can trade again"}
+
+
+@app.post("/control/wake")
+async def wake_bot():
+    """Reset all stopped states and force the bot back to active trading."""
+    bot = get_bot()
+    if not bot:
+        raise HTTPException(503, "Bot not running")
+    bot.risk_manager.reset_halt()
+    bot.risk_manager._paused = False
+    return {"message": "Bot woken — all halts and pauses cleared"}
 
 
 @app.post("/settings/price")
