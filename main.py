@@ -152,39 +152,46 @@ class TradingBot:
             try:
                 await self._scan_markets()
                 _diag_tick += 1
-                if _diag_tick % 60 == 0:  # Log diagnostics every ~60 seconds
+                if _diag_tick % 30 == 0:  # Log diagnostics every ~30 seconds
                     await self._log_diagnostics()
             except Exception as e:
                 logger.error(f"Trading loop error: {e}", exc_info=True)
             await asyncio.sleep(1.0)
 
     async def _log_diagnostics(self):
-        """Log top market prices and bot state every 60s to help diagnose missed trades."""
+        """Log market state every 30s — shows exactly why bot is/isn't trading."""
         markets = list(self.poly_listener.markets.values())
         if not markets:
-            logger.warning("DIAG: No markets in listener — listener may not be fetching data")
+            logger.warning("DIAG: 0 markets tracked — proxy down or listener error")
             return
 
-        # Find the highest-priced token across all markets
+        active = self.order_manager.active_count
+        can, reason = self.risk_manager.can_trade(active)
+        halted = self.risk_manager.is_halted
+        paused = self.risk_manager.is_paused
+
+        # Check Binance feed health
+        binance_ok = [c for c in self.config["markets"]["coins"] if self.binance.is_ready(c)]
+        binance_stale = [c for c in self.config["markets"]["coins"] if not self.binance.is_ready(c)]
+
+        # Find best candidates and why they're blocked
+        sniper_min = self.config.get("price", {}).get("sniper_min", 0.97)
+        near_expiry = [m for m in markets if not m.is_expired and m.seconds_to_expiry <= 150]
+        qualifying_price = [m for m in near_expiry if m.best_trade_side[1] >= sniper_min]
+
         top = sorted(
             [(m.coin, m.timeframe, *m.best_trade_side, round(m.seconds_to_expiry, 0))
              for m in markets if not m.is_expired],
-            key=lambda x: -x[3]  # sort by price descending (index 3 = price)
+            key=lambda x: -x[3]
         )
-        # top[i] = (coin, timeframe, side, price, tte)
-        top5 = [(f"{c} {tf} {side.upper()}={price:.4f} tte={tte:.0f}s")
-                for c, tf, side, price, tte in top[:5]]
-
-        halted = self.risk_manager.is_halted
-        paused = self.risk_manager.is_paused
-        active = self.order_manager.active_count
-        can, reason = self.risk_manager.can_trade(active)
+        top5 = [f"{c} {tf} {s.upper()}={p:.2f} tte={t:.0f}s" for c, tf, s, p, t in top[:5]]
 
         logger.info(
-            f"DIAG: {len(markets)} markets tracked | "
-            f"active_orders={active} | halted={halted} paused={paused} | "
-            f"can_trade={can} ({reason}) | "
-            f"top prices: {', '.join(top5) if top5 else 'none'}"
+            f"DIAG | markets={len(markets)} near_expiry={len(near_expiry)} "
+            f"price_ok={len(qualifying_price)} active={active} "
+            f"can_trade={can}({reason}) halted={halted} paused={paused} | "
+            f"binance_ok={binance_ok} stale={binance_stale} | "
+            f"top: {', '.join(top5) if top5 else 'none'}"
         )
 
     async def _scan_markets(self):
@@ -479,15 +486,23 @@ class TradingBot:
     # CONFIG HOT-RELOAD WATCHER
     # ------------------------------------------------------------------
     async def _keepalive_loop(self):
-        """Self-ping every 60 seconds to prevent proxy/Railway idle timeouts."""
+        """
+        Ping every 60s to prevent idle timeouts.
+        - Pings localhost to keep the internal event loop warm.
+        - Pings the Railway public URL (if set) to generate external inbound
+          traffic so Railway never considers the service idle/sleepy.
+        """
         import httpx as _httpx
         port = self.config.get("dashboard", {}).get("port", 8080)
+        public_url = os.environ.get("RAILWAY_PUBLIC_URL", "").rstrip("/")
         await asyncio.sleep(30)  # wait for server to start
         while self._running:
             try:
                 async with _httpx.AsyncClient(timeout=5.0) as c:
                     await c.get(f"http://localhost:{port}/ping")
-                    logger.debug("Keepalive ping OK")
+                    if public_url:
+                        await c.get(f"{public_url}/ping")
+                        logger.debug(f"External keepalive ping → {public_url}/ping")
             except Exception as e:
                 logger.debug(f"Keepalive ping failed: {e}")
             await asyncio.sleep(60)

@@ -146,19 +146,27 @@ class BinanceFeed:
         streams = "/".join(self._stream_names())
         url = f"{base_url}?streams={streams}"
         logger.info(f"BinanceFeed connecting to {base_url}")
+        self._last_msg_time = time.time()
         async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
             self._ws = ws
-            self._last_msg_time = time.time()
             logger.info("BinanceFeed connected")
-            async for raw in ws:
-                if not self._running:
-                    break
-                self._last_msg_time = time.time()
-                self._handle_message(raw)
-                # Stale check: if no message for 60s, force reconnect
-                if time.time() - self._last_msg_time > 60:
-                    logger.warning("BinanceFeed stale (no data 60s) — forcing reconnect")
-                    break
+            # Stale watchdog: separate task that closes WS if silent for 60s
+            async def _stale_watchdog():
+                while True:
+                    await asyncio.sleep(15)
+                    if time.time() - self._last_msg_time > 60:
+                        logger.warning("BinanceFeed stale (60s no data) — forcing reconnect")
+                        await ws.close()
+                        return
+            watchdog = asyncio.create_task(_stale_watchdog())
+            try:
+                async for raw in ws:
+                    if not self._running:
+                        break
+                    self._last_msg_time = time.time()
+                    self._handle_message(raw)
+            finally:
+                watchdog.cancel()
 
     def _handle_message(self, raw: str):
         try:
