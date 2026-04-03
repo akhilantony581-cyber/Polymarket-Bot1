@@ -409,10 +409,6 @@ class TradingBot:
             # Losing side: complement minus mm_gap (very cheap, 0.05-0.08 range)
             lose_price = round(max(0.01, (1.0 - price) - mm_gap), 2)
 
-            # Only proceed if combined cost leaves a profit margin
-            if win_price + lose_price >= 0.97:
-                continue
-
             win_usdc  = round(win_price  * mm_conts, 2)
             lose_usdc = round(lose_price * mm_conts, 2)
             total_usdc = win_usdc + lose_usdc
