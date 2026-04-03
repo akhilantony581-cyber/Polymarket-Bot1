@@ -7,8 +7,8 @@ capital:
   total: 150.0
   max_concurrent_trades: 500
   maker_allocation_pct: 0.30
-  max_per_trade: 20.0
-  max_per_market: 20.0
+  max_per_trade: 40.0
+  max_per_market: 40.0
 
 risk:
   consecutive_loss_limit: 999      # Effectively disabled — bot runs continuously
@@ -94,8 +94,8 @@ momentum_gate:
 snipe2:
   enabled: true
   min_price: 0.95
-  max_per_trade: 20.0
-  max_per_market: 20.0
+  max_per_trade: 40.0
+  max_per_market: 40.0
   window_seconds: 10
 
 
