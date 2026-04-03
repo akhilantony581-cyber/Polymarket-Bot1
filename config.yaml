@@ -4,11 +4,11 @@
 
 # --- Capital & Risk ---
 capital:
-  total: 100.0
-  max_concurrent_trades: 5          # limit concurrent exposure
+  total: 150.0
+  max_concurrent_trades: 500
   maker_allocation_pct: 0.30
-  max_per_trade: 5.0                # max 5% of capital per trade
-  max_per_market: 10.0              # max 10% per market
+  max_per_trade: 20.0
+  max_per_market: 20.0
 
 risk:
   consecutive_loss_limit: 3        # Stop trading after 3 consecutive losses
@@ -81,8 +81,8 @@ momentum_gate:
 snipe2:
   enabled: true
   min_price: 0.95
-  max_per_trade: 3.0        # reduced from $10 — snipe2 is highest risk
-  max_per_market: 6.0
+  max_per_trade: 20.0
+  max_per_market: 20.0
   window_seconds: 10
 
 
