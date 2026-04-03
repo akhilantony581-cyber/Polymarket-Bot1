@@ -310,12 +310,117 @@ class PolymarketListener:
 
         logger.info(f"Market refresh: {found} markets tracked ({errors} errors)")
 
+        # Fetch 1h markets via tag (they use date-based slugs, not epoch-based)
+        await self._refresh_1h_markets()
+
         # Prune expired markets so they don't accumulate across cycles
         expired_ids = [mid for mid, m in self.markets.items() if m.is_expired]
         for mid in expired_ids:
             del self.markets[mid]
         if expired_ids:
             logger.debug(f"Pruned {len(expired_ids)} expired markets")
+
+    async def _refresh_1h_markets(self):
+        """
+        Fetch 1h crypto markets via the '1h' tag.
+        These use human-readable slugs (e.g. bitcoin-up-or-down-april-3-2026-2pm-et)
+        so we can't construct them from epoch — we query the tag instead.
+        """
+        import json as _json
+
+        COIN_KEYWORDS_1H = {
+            "BTC":  ["bitcoin"],
+            "ETH":  ["ethereum"],
+            "SOL":  ["solana"],
+            "XRP":  ["xrp"],
+            "DOGE": ["dogecoin"],
+            "BNB":  ["bnb"],
+            "HYPE": ["hype"],
+        }
+
+        configured_coins = set(self.config.get("markets", {}).get("coins", list(COIN_KEYWORDS_1H.keys())))
+
+        try:
+            resp = await self._client.get(
+                f"{self.GAMMA_BASE}/events",
+                params={"tag_slug": "1h", "active": "true", "closed": "false", "limit": 100},
+            )
+            if resp.status_code != 200:
+                logger.debug(f"1h tag fetch HTTP {resp.status_code}")
+                return
+            events = resp.json()
+        except Exception as e:
+            logger.debug(f"1h market refresh error: {e}")
+            return
+
+        found_1h = 0
+        for event in events:
+            if event.get("closed", False):
+                continue
+
+            slug = event.get("slug", "")
+            title = (event.get("title") or slug).lower()
+
+            # Match coin
+            coin = None
+            for c, keywords in COIN_KEYWORDS_1H.items():
+                if c not in configured_coins:
+                    continue
+                if any(kw in title for kw in keywords):
+                    coin = c
+                    break
+            if not coin:
+                continue
+
+            # Only "up or down" style markets
+            if "up or down" not in title and "up-or-down" not in slug:
+                continue
+
+            markets_list = event.get("markets", [])
+            if not markets_list:
+                continue
+
+            m = markets_list[0]
+
+            raw_token_ids = m.get("clobTokenIds", "[]")
+            if isinstance(raw_token_ids, str):
+                token_ids = _json.loads(raw_token_ids)
+            else:
+                token_ids = raw_token_ids
+            if len(token_ids) < 2:
+                continue
+
+            yes_token = str(token_ids[0])
+            no_token  = str(token_ids[1])
+
+            expiry_str = m.get("endDate") or event.get("endDate") or ""
+            expiry_ts = self._parse_expiry(expiry_str)
+            if not expiry_ts or expiry_ts < time.time():
+                continue
+
+            yes_price = float(m.get("bestAsk") or m.get("lastTradePrice") or 0)
+            market_id = str(m.get("id") or m.get("conditionId", slug))
+            condition_id = str(m.get("conditionId", ""))
+
+            pm = PolymarketMarket(
+                market_id=market_id,
+                condition_id=condition_id,
+                question=m.get("question") or event.get("title", slug),
+                coin=coin,
+                timeframe="1h",
+                strike=0.0,
+                direction="up",
+                yes_token_id=yes_token,
+                no_token_id=no_token,
+                yes_price=yes_price,
+                expiry_timestamp=expiry_ts,
+            )
+            self.markets[market_id] = pm
+            found_1h += 1
+            logger.debug(f"1h tracked: {slug} coin={coin} price={yes_price:.3f} tte={pm.seconds_to_expiry:.0f}s")
+
+        if found_1h:
+            logger.info(f"1h market refresh: {found_1h} markets tracked")
 
     def is_valid_market(self, m: dict) -> bool:
         """Quick pre-filter: crypto keyword + timeframe + not closed."""
