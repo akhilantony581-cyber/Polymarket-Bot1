@@ -167,47 +167,109 @@ class TradingBot:
                 await self._scan_markets()
                 await self._scan_maker_both_sides()
                 _diag_tick += 1
-                if _diag_tick % 30 == 0:
+                if _diag_tick % 10 == 0:
                     await self._log_diagnostics()
             except Exception as e:
                 logger.error(f"Trading loop error: {e}", exc_info=True)
             await asyncio.sleep(1.0)
 
     async def _log_diagnostics(self):
-        """Log market state every 30s — shows exactly why bot is/isn't trading."""
+        """Log market state every 10s with per-market skip reasons."""
         markets = list(self.poly_listener.markets.values())
         if not markets:
-            logger.warning("DIAG: 0 markets tracked — proxy down or listener error")
+            logger.warning("DIAG: 0 markets tracked — listener may be down")
             return
 
         active = self.order_manager.active_count
         can, reason = self.risk_manager.can_trade(active)
-        halted = self.risk_manager.is_halted
-        paused = self.risk_manager.is_paused
+        halted  = self.risk_manager.is_halted
+        paused  = self.risk_manager.is_paused
+        deployed = self.risk_manager.metrics.capital_deployed
 
-        # Check Binance feed health
-        binance_ok = [c for c in self.config["markets"]["coins"] if self.binance.is_ready(c)]
+        binance_ok    = [c for c in self.config["markets"]["coins"] if self.binance.is_ready(c)]
         binance_stale = [c for c in self.config["markets"]["coins"] if not self.binance.is_ready(c)]
 
-        # Find best candidates and why they're blocked
-        sniper_min = self.config.get("price", {}).get("sniper_min", 0.97)
-        near_expiry = [m for m in markets if not m.is_expired and m.seconds_to_expiry <= 150]
-        qualifying_price = [m for m in near_expiry if m.best_trade_side[1] >= sniper_min]
+        sniper_min   = self.config.get("price", {}).get("sniper_min", 0.97)
+        s1h_min      = self.config.get("snipe_1h", {}).get("min_price", 0.89)
+        s1h_window   = self.config.get("snipe_1h", {}).get("window_seconds", 1500)
+        mg            = self.config.get("momentum_gate", {})
+        mg_enabled    = mg.get("enabled", True)
+        mg_min_pct    = mg.get("min_pct", 0.01)
+        mg_boundary   = mg.get("boundary_pct", 0.03)
+        mg_window     = mg.get("window_seconds", 30)
+
+        # Per-market breakdown for markets within any trade window
+        skip_reasons = {}
+        for m in markets:
+            if m.is_expired:
+                continue
+            tf = m.timeframe
+            if tf == "1h":
+                tf_window, tf_min = s1h_window, s1h_min
+            elif tf == "15m":
+                tf_window, tf_min = 180, sniper_min
+            else:
+                continue  # 5m disabled
+
+            tte = m.seconds_to_expiry
+            if tte > tf_window:
+                continue  # not in window yet — don't spam
+
+            side, price = m.best_trade_side
+            key = f"{m.coin}/{tf}"
+
+            if price < tf_min:
+                skip_reasons[key] = f"price {price:.3f} < min {tf_min}"
+                continue
+
+            if mg_enabled:
+                bd = self.binance.get(m.coin)
+                if not bd or not self.binance.is_ready(m.coin):
+                    skip_reasons[key] = "no_binance_data"
+                    continue
+                mom = bd.momentum(mg_window)
+                if mom is None:
+                    skip_reasons[key] = "mom=None"
+                    continue
+                buying_up = (side == "yes")
+                if buying_up and mom < mg_min_pct:
+                    skip_reasons[key] = f"mom_gate UP mom={mom:.3f}%"
+                    continue
+                if not buying_up and mom > -mg_min_pct:
+                    skip_reasons[key] = f"mom_gate DOWN mom={mom:.3f}%"
+                    continue
+                if tte > 5 and abs(mom) < mg_boundary:
+                    skip_reasons[key] = f"boundary mom={mom:.3f}%"
+                    continue
+
+            if self._market_has_active_order(m.market_id):
+                skip_reasons[key] = "has_active_order"
+                continue
+
+            exp = self._market_exposure(m.market_id)
+            tf_max = self.config.get("snipe_1h", {}).get("max_per_market", 50.0) if tf == "1h" else self.config["capital"].get("max_per_market", 20.0)
+            if exp >= tf_max:
+                skip_reasons[key] = f"exposure {exp:.1f}>={tf_max}"
+                continue
+
+            skip_reasons[key] = f"QUALIFYING price={price:.3f} tte={tte:.0f}s"
 
         top = sorted(
             [(m.coin, m.timeframe, *m.best_trade_side, round(m.seconds_to_expiry, 0))
              for m in markets if not m.is_expired],
             key=lambda x: -x[3]
-        )
-        top5 = [f"{c} {tf} {s.upper()}={p:.2f} tte={t:.0f}s" for c, tf, s, p, t in top[:5]]
+        )[:5]
+        top5 = [f"{c}/{tf} {s.upper()}={p:.2f} tte={t:.0f}s" for c, tf, s, p, t in top]
 
         logger.info(
-            f"DIAG | markets={len(markets)} near_expiry={len(near_expiry)} "
-            f"price_ok={len(qualifying_price)} active={active} "
-            f"can_trade={can}({reason}) halted={halted} paused={paused} | "
-            f"binance_ok={binance_ok} stale={binance_stale} | "
-            f"top: {', '.join(top5) if top5 else 'none'}"
+            f"DIAG | markets={len(markets)} active={active} deployed=${deployed:.2f} "
+            f"can={can}({reason}) halted={halted} paused={paused} | "
+            f"binance_ok={binance_ok} stale={binance_stale}"
         )
+        logger.info(f"DIAG | top5: {', '.join(top5) if top5 else 'none'}")
+        if skip_reasons:
+            for k, v in skip_reasons.items():
+                logger.info(f"DIAG | {k}: {v}")
 
     async def _scan_markets(self):
         max_per_trade  = self.config["capital"].get("max_per_trade", 20.0)
