@@ -57,6 +57,7 @@ class TradingBot:
         self._running = False
         self._config_path = "config.yaml"
         self._last_config_mtime = 0.0
+        self._last_scan_time = time.time()  # tracks last successful scan cycle
 
         # Initialize all modules
         coins = config["markets"]["coins"]
@@ -139,9 +140,10 @@ class TradingBot:
             await asyncio.sleep(300)
 
     # ------------------------------------------------------------------
-    # WATCHDOG — detects stalls and auto-recovers
+    # WATCHDOG — detects stalls and force-restarts via exit if frozen
     # ------------------------------------------------------------------
     async def _watchdog_loop(self):
+        STALE_LIMIT = 600  # 10 minutes — exit and let Railway restart
         while self._running:
             await asyncio.sleep(60)
 
@@ -157,6 +159,15 @@ class TradingBot:
                 logger.error("[WATCHDOG] OrderManager stopped — restarting")
                 await self.order_manager.start()
 
+            # If trading loop has frozen, force-exit so Railway auto-restarts
+            stale_secs = time.time() - self._last_scan_time
+            if stale_secs > STALE_LIMIT:
+                logger.critical(
+                    f"[WATCHDOG] Trading loop stale for {stale_secs:.0f}s — forcing restart"
+                )
+                import sys
+                sys.exit(1)
+
     # ------------------------------------------------------------------
     # MAIN TRADING LOOP
     # ------------------------------------------------------------------
@@ -166,6 +177,7 @@ class TradingBot:
             try:
                 await self._scan_markets()
                 await self._scan_maker_both_sides()
+                self._last_scan_time = time.time()
                 _diag_tick += 1
                 if _diag_tick % 10 == 0:
                     await self._log_diagnostics()
