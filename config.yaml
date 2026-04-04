@@ -80,9 +80,9 @@ market_maker:
 # or when price has barely moved (too close to boundary to be confident).
 momentum_gate:
   enabled: true
-  window_seconds: 30       # look-back window for momentum calculation
-  min_pct: 0.03            # require at least +0.03% momentum IN trade direction (was -0.05 — too lenient)
-  boundary_pct: 0.10       # skip if |30s momentum| < 0.10% (was 0.02 — too easy to pass)
+  window_seconds: 30
+  min_pct: 0.01
+  boundary_pct: 0.03
 
 # --- Snipe 2 Mode (last 10 seconds, any price >= 0.95) ---
 snipe2:
