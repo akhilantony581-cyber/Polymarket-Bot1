@@ -347,14 +347,8 @@ class TradingBot:
                 binance_ready = bd and self.binance.is_ready(market.coin)
 
                 if not binance_ready:
-                    # No Binance data — fall back to strict threshold
-                    strict = min(0.97, tf_min + 0.05)
-                    if price < strict:
-                        logger.debug(
-                            f"No Binance data for {market.coin} — "
-                            f"requiring {strict:.2f}, got {price:.4f}, skipping"
-                        )
-                        continue
+                    # No Binance data — skip momentum check, price floor already applied
+                    pass
                 else:
                     mom = bd.momentum(mg_window)
                     if mom is not None:
@@ -436,10 +430,7 @@ class TradingBot:
                 bd = self.binance.get(market.coin)
                 binance_ready = bd and self.binance.is_ready(market.coin)
                 if not binance_ready:
-                    # No Binance data — require stricter price floor for snipe2 too
-                    if price < 0.98:
-                        logger.debug(f"S2 no Binance data for {market.coin}, price {price:.4f} < 0.98, skipping")
-                        continue
+                    pass  # No Binance data — skip momentum check, price floor already applied
                 else:
                     mom = bd.momentum(15)  # shorter window for last-10s trades
                     if mom is not None:

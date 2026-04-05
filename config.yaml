@@ -79,7 +79,7 @@ market_maker:
 # Blocks trades when Binance price is running against the direction being bought,
 # or when price has barely moved (too close to boundary to be confident).
 momentum_gate:
-  enabled: true
+  enabled: false
   window_seconds: 30
   min_pct: 0.01
   boundary_pct: 0.03
