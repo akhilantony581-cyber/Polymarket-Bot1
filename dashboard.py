@@ -912,20 +912,43 @@ async def health():
     rpc   = os.environ.get("POLYGON_RPC_URL", "")
 
     wallet = ""
+    clob_ready = False
+    markets_tracked = 0
+    last_scan_age = None
+    halted = False
+    paused = False
+    binance_ready = []
+    binance_stale = []
+
     if bot:
         wallet = getattr(bot.execution, "_wallet_address", "")
+        clob_ready = getattr(bot.execution, "_clob", None) is not None
+        markets_tracked = len(bot.poly_listener.markets)
+        last_scan_age = round(time.time() - bot._last_scan_time, 1)
+        halted = bot.risk_manager.is_halted
+        paused = bot.risk_manager.is_paused
+        coins = bot.config.get("markets", {}).get("coins", [])
+        binance_ready = [c for c in coins if bot.binance.is_ready(c)]
+        binance_stale = [c for c in coins if not bot.binance.is_ready(c)]
 
     return {
-        "bot_running":          bot is not None,
-        "wallet_address":       wallet or "not loaded",
+        "bot_running":              bot is not None,
+        "clob_client_ready":        clob_ready,
+        "wallet_address":           wallet or "not loaded",
+        "markets_tracked":          markets_tracked,
+        "last_scan_seconds_ago":    last_scan_age,
+        "halted":                   halted,
+        "paused":                   paused,
+        "binance_ready":            binance_ready,
+        "binance_stale":            binance_stale,
         "POLYMARKET_PRIVATE_KEY":   masked(pk),
         "POLYMARKET_API_KEY":       masked(ak),
         "POLYMARKET_API_SECRET":    masked(sec),
         "POLYMARKET_API_PASSPHRASE": masked(pw),
         "TELEGRAM_BOT_TOKEN":       masked(tg),
         "POLYGON_RPC_URL":          rpc if rpc else "MISSING (using default)",
-        "trading_enabled":      bool(pk and ak and sec and pw),
-        "telegram_enabled":     bool(tg),
+        "trading_enabled":          bool(pk and ak and sec and pw),
+        "telegram_enabled":         bool(tg),
     }
 
 
