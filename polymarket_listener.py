@@ -159,7 +159,7 @@ class PolymarketListener:
         self.markets: Dict[str, PolymarketMarket] = {}
         self._running = False
         self._client: Optional[httpx.AsyncClient] = None
-        self.poll_interval = 1.0
+        self.poll_interval = 30.0  # refresh market list every 30s (not every 1s)
 
     async def start(self):
         self._running = True
@@ -228,8 +228,11 @@ class PolymarketListener:
         found = 0
         errors = 0
 
+        # Only fetch slug-based timeframes (not 1h — those use tag API)
+        slug_timeframes = {k: v for k, v in self.TIMEFRAME_SECONDS.items() if k != "1h"}
+
         for coin, slug_prefix in self.COIN_SLUGS.items():
-            for tf, tf_sec in self.TIMEFRAME_SECONDS.items():
+            for tf, tf_sec in slug_timeframes.items():
                 current_epoch = self._current_epoch(tf_sec)
                 # Fetch current window and next window (in case current just closed)
                 for epoch in [current_epoch, current_epoch + tf_sec]:
