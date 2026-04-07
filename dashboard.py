@@ -1239,7 +1239,7 @@ class ManualRedeemRequest(BaseModel):
     condition_id: str
 
 
-@app.get("/ping")
+@app.api_route("/ping", methods=["GET", "POST", "HEAD"])
 async def ping():
     return {"status": "ok"}
 
