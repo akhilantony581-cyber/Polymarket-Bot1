@@ -374,8 +374,13 @@ DASHBOARD_HTML = """
 <div class="grid-2" style="padding-top:0">
   <div class="card">
     <h3>Shared — Capital & Risk</h3>
+    <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;margin-bottom:12px">
+      <div style="font-size:11px;color:#8b949e;margin-bottom:4px">POLYMARKET WALLET BALANCE</div>
+      <div id="cashBalance" style="font-size:26px;font-weight:bold;color:#3fb950">Loading...</div>
+      <div style="font-size:11px;color:#8b949e;margin-top:4px">Live USDC.e on Polygon · refreshes every 30s</div>
+    </div>
     <div class="control-row">
-      <label>Total Capital ($)</label>
+      <label>Bot Capital Budget ($)</label>
       <input type="number" id="totalCapital" min="10" step="10" value="100">
     </div>
     <div class="control-row">
@@ -585,6 +590,16 @@ function _updateStateInner(s) {
   document.getElementById('capitalDeployed').textContent = `$${(metrics.capital_deployed || 0).toFixed(2)}`;
   document.getElementById('capitalTotal').textContent = `of $${(s.config?.total_capital || 100).toFixed(2)}`;
   document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+
+  // Live wallet balance
+  const cb = document.getElementById('cashBalance');
+  if (s.cash_balance != null) {
+    cb.textContent = `$${s.cash_balance.toFixed(2)} USDC`;
+    cb.style.color = s.cash_balance > 10 ? '#3fb950' : '#e3b341';
+  } else {
+    cb.textContent = 'Unavailable';
+    cb.style.color = '#8b949e';
+  }
 
   // Config sliders
   if (s.config) {
@@ -1093,6 +1108,7 @@ async def get_state():
     if not bot:
         return {"error": "Bot not running"}
     state = bot.get_state()
+    state["cash_balance"] = await bot.execution.get_usdc_balance()
     state["logs"] = list(_log_buffer)[-100:]  # last 100 lines
     return state
 
@@ -1488,14 +1504,17 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         bot = get_bot()
         if bot:
+            s = bot.get_state()
+            s["cash_balance"] = await bot.execution.get_usdc_balance()
             await websocket.send_text(json.dumps({
-                "type": "state", "payload": bot.get_state()
+                "type": "state", "payload": s
             }))
         while True:
             await asyncio.sleep(2)
             bot = get_bot()
             if bot:
                 s = bot.get_state()
+                s["cash_balance"] = await bot.execution.get_usdc_balance()
                 s["logs"] = list(_log_buffer)[-100:]
                 await websocket.send_text(json.dumps({
                     "type": "state", "payload": s

@@ -114,6 +114,41 @@ class ExecutionEngine:
             logger.error(f"Account init failed: {e}")
 
     # ------------------------------------------------------------------
+    # LIVE USDC BALANCE (Polygon RPC — USDC.e balanceOf proxy wallet)
+    # ------------------------------------------------------------------
+    _balance_cache: Optional[float] = None
+    _balance_cache_at: float = 0.0
+    _BALANCE_TTL = 30.0  # seconds between RPC fetches
+
+    async def get_usdc_balance(self) -> Optional[float]:
+        """Return cached USDC balance; refresh via Polygon RPC every 30s."""
+        now = time.time()
+        if self._balance_cache is not None and now - self._balance_cache_at < self._BALANCE_TTL:
+            return self._balance_cache
+        try:
+            wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "") or self._wallet_address
+            if not wallet:
+                return None
+            # USDC.e on Polygon (bridged USDC used by Polymarket)
+            USDC_E = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            # balanceOf(address) ABI selector
+            data = "0x70a08231" + wallet.lower().replace("0x", "").zfill(64)
+            rpc_url = os.environ.get("POLYGON_RPC_URL", "https://polygon-rpc.com")
+            resp = await self._rpc_http.post(rpc_url, json={
+                "jsonrpc": "2.0", "id": 1,
+                "method": "eth_call",
+                "params": [{"to": USDC_E, "data": data}, "latest"],
+            })
+            raw = int(resp.json().get("result", "0x0"), 16)
+            balance = raw / 1_000_000  # USDC has 6 decimals
+            self._balance_cache = balance
+            self._balance_cache_at = now
+            return balance
+        except Exception as e:
+            logger.debug(f"USDC balance fetch failed: {e}")
+            return self._balance_cache  # return stale if available
+
+    # ------------------------------------------------------------------
     # PLACE LIMIT ORDER (BUY)
     # ------------------------------------------------------------------
     async def place_limit_order(
