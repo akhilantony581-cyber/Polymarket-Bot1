@@ -13,6 +13,11 @@ from typing import Any, Dict
 
 from signal_engine import SignalResult
 
+try:
+    import trade_db as _tdb
+except Exception:
+    _tdb = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,6 +110,10 @@ class StructuredLogger:
         if signal.yes_price >= 0.97:
             self._write(self._signal_path, signal.to_dict())
 
+    @staticmethod
+    def _bot(pos: Any) -> str:
+        return "bot2" if getattr(pos.market, "timeframe", "") == "1h" else "bot1"
+
     def log_trade_open(self, pos: Any):
         self._write(self._trade_path, {
             "event": "open",
@@ -117,8 +126,19 @@ class StructuredLogger:
             "entry_usdc": pos.entry_usdc,
             "timestamp": time.time(),
         })
+        if _tdb:
+            try:
+                _tdb.log_trade(
+                    bot=self._bot(pos), coin=pos.market.coin,
+                    timeframe=pos.market.timeframe, mode=pos.mode,
+                    entry_price=pos.entry_price, entry_usdc=pos.entry_usdc,
+                    market_id=pos.market.market_id, order_id=pos.order.order_id,
+                )
+            except Exception as e:
+                logger.warning(f"trade_db open write failed: {e}")
 
     def log_trade_closed(self, pos: Any):
+        win = (pos.pnl or 0) > 0
         self._write(self._trade_path, {
             "event": "closed",
             "order_id": pos.order.order_id,
@@ -129,11 +149,22 @@ class StructuredLogger:
             "entry_price": pos.entry_price,
             "entry_usdc": pos.entry_usdc,
             "pnl": pos.pnl,
-            "win": (pos.pnl or 0) > 0,
+            "win": win,
             "redeemed": pos.redeemed,
             "timestamp": time.time(),
         })
         self.win_rate.record_closed(pos)
+        if _tdb:
+            try:
+                _tdb.log_trade(
+                    bot=self._bot(pos), coin=pos.market.coin,
+                    timeframe=pos.market.timeframe, mode=pos.mode,
+                    entry_price=pos.entry_price, entry_usdc=pos.entry_usdc,
+                    pnl=pos.pnl, win=win,
+                    market_id=pos.market.market_id, order_id=pos.order.order_id,
+                )
+            except Exception as e:
+                logger.warning(f"trade_db closed write failed: {e}")
 
     def log_cancel(self, pos: Any, reason: str):
         self._write(self._trade_path, {

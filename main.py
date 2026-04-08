@@ -855,6 +855,14 @@ async def main():
     config = load_config("config.yaml")
     setup_logging(config)
 
+    # Migrate any existing trades.jsonl into persistent DB (non-fatal)
+    try:
+        import trade_db as _tdb
+        log_cfg = config.get("logging", {})
+        _tdb.hydrate_from_jsonl(Path(log_cfg.get("trade_log_file", "logs/trades.jsonl")))
+    except Exception as _e:
+        logging.getLogger(__name__).warning(f"trade_db migration skipped: {_e}")
+
     bot = TradingBot(config)
 
     # Make bot accessible to dashboard routes (same process)

@@ -10,6 +10,7 @@ import builtins
 import collections
 import json
 import logging
+from typing import Optional
 import os
 import time
 from pathlib import Path
@@ -22,6 +23,19 @@ import uvicorn
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Polymarket Bot Dashboard")
+
+try:
+    import trade_db as _tdb
+except Exception:
+    _tdb = None
+
+@app.on_event("startup")
+async def _startup():
+    if _tdb:
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, _tdb.init_db)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"trade_db init failed (non-fatal): {e}")
 
 # Circular buffer of recent log lines — included in every state push
 _log_buffer: collections.deque = collections.deque(maxlen=200)
@@ -1304,59 +1318,78 @@ def read_trade_log(limit: int = 200) -> list:
 
 
 @app.get("/trades/log")
-async def get_trade_log():
+async def get_trade_log(bot: str = "", limit: int = 300):
+    if _tdb:
+        return _tdb.get_trades(limit=limit, bot=bot or None, resolved_only=True)
     return read_trade_log(200)
 
 
+@app.get("/trades/analysis")
+async def get_cached_analysis():
+    if _tdb:
+        result = _tdb.load_analysis()
+        if result:
+            return result
+    return {"analysis": None, "generated_at": None, "stats": {}}
+
+
 @app.post("/analyze")
-async def analyze_trades():
+async def analyze_trades(force: bool = False):
+    # Return cache if fresh (< 6h) and not forcing
+    if _tdb and not force:
+        cached = _tdb.load_analysis()
+        if cached and time.time() - cached["generated_at"] < 6 * 3600:
+            cached["from_cache"] = True
+            return cached
+
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         raise HTTPException(503, "ANTHROPIC_API_KEY not set in Railway env vars")
-    trades = read_trade_log(100)
+
+    # Get data from persistent DB or fallback to jsonl
+    if _tdb:
+        stats  = _tdb.get_stats()
+        trades = _tdb.get_trades(limit=200, resolved_only=True)
+    else:
+        trades = read_trade_log(100)
+        wins = [t for t in trades if t.get("win")]
+        total_pnl = sum(t.get("pnl", 0) or 0 for t in trades)
+        stats = {"summary": {"total": len(trades), "wins": len(wins), "total_pnl": round(total_pnl, 4)}, "rows": []}
+
     if not trades:
-        return {"analysis": "No trade history yet. The AI agent will analyze your trades once you have some completed."}
+        return {"analysis": "No completed trades yet. Analysis will run once positions are redeemed."}
+
     try:
         import anthropic as _anthropic
         client = _anthropic.Anthropic(api_key=api_key)
+        prompt = f"""You are an expert Polymarket automated trading analyst.
 
-        wins   = [t for t in trades if t.get("win")]
-        losses = [t for t in trades if not t.get("win") and t.get("pnl") is not None]
-        total_pnl = sum(t.get("pnl", 0) or 0 for t in trades)
-        win_rate  = round(len(wins) / len(trades) * 100, 1) if trades else 0
+Bot 1 (15m Sniper): buys Up/Down tokens in last 3 min of 15m markets. Entry ≥ 0.97. Win = +3%, Loss = -100%.
+Bot 2 (1h Market): buys Up/Down tokens in last 25 min of 1h markets. Entry ≥ 0.89. Higher variance.
 
-        summary = {
-            "total_trades": len(trades),
-            "wins": len(wins),
-            "losses": len(losses),
-            "win_rate_pct": win_rate,
-            "total_pnl_usdc": round(total_pnl, 4),
-            "recent_trades": trades[-20:],
-        }
+STATS:
+{json.dumps(stats, indent=2)}
 
-        prompt = f"""You are an expert Polymarket trading analyst reviewing a sniper bot's performance.
+RECENT 30 TRADES:
+{json.dumps(trades[:30], indent=2)}
 
-The bot trades Up/Down crypto markets (BTC, ETH, SOL, XRP) on 5-minute and 15-minute timeframes.
-It buys whichever token (UP or DOWN) is priced at 0.98+ — meaning the market has nearly decided.
-A winning trade resolves at 1.0 (profit = ~2%), a losing trade resolves at 0.0 (total loss).
+Provide:
+## Bot 1 vs Bot 2 Comparison
+## Best Performing Coins
+## Losing Patterns
+## Suggested Parameter Changes (specific numbers)
+## Top 3 Action Items
 
-Performance summary:
-{json.dumps(summary, indent=2)}
-
-Please provide:
-1. **Key Learning Points** — what patterns do you see in wins vs losses?
-2. **Risk Assessment** — is the strategy sustainable? What are the main risks?
-3. **Specific Suggestions** — concrete parameter changes or strategy improvements
-4. **Market Timing** — which coins/timeframes perform best?
-
-Be concise and actionable. Format with clear headers."""
+Be direct and specific."""
 
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
+            model="claude-haiku-4-5-20251001", max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
-        return {"analysis": msg.content[0].text, "stats": summary}
+        analysis_text = msg.content[0].text
+        if _tdb:
+            _tdb.save_analysis(analysis_text, stats)
+        return {"analysis": analysis_text, "stats": stats, "from_cache": False}
     except Exception as e:
         raise HTTPException(500, f"Analysis failed: {e}")
 
@@ -1432,12 +1465,13 @@ async def ping():
 
 @app.get("/stats")
 async def get_stats():
-    """Win/loss stats per coin, timeframe and mode."""
+    if _tdb:
+        return _tdb.get_stats()
     bot = get_bot()
     if not bot:
-        return {"summary": {}, "rows": []}
+        return {"summary": {}, "bot1": {}, "bot2": {}, "rows": []}
     tracker = bot.structured_log.win_rate
-    return {"summary": tracker.summary(), "rows": tracker.get_stats()}
+    return {"summary": tracker.summary(), "bot1": {}, "bot2": {}, "rows": tracker.get_stats()}
 
 
 @app.post("/redeem/all")
