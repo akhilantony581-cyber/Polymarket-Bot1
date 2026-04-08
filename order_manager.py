@@ -168,6 +168,13 @@ class OrderManager:
     # MONITOR LOOP — runs per order
     # ------------------------------------------------------------------
     async def _monitor_order(self, pos: ManagedPosition):
+        try:
+            await self._monitor_order_inner(pos)
+        except Exception as e:
+            logger.error(f"Monitor crashed for {pos.order.order_id}: {e} — force-cancelling")
+            self._on_order_cancelled(pos, "monitor_crash")
+
+    async def _monitor_order_inner(self, pos: ManagedPosition):
         order = pos.order
         market = pos.market
         mode = pos.mode

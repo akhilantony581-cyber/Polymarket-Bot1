@@ -159,6 +159,24 @@ class TradingBot:
                 logger.error("[WATCHDOG] OrderManager stopped — restarting")
                 await self.order_manager.start()
 
+            # Force-clear orders stuck > 5 min (monitor crashed or timed out)
+            stale = [
+                pos for pos in list(self.order_manager.active_orders.values())
+                if pos.order.age_seconds > 300
+            ]
+            for pos in stale:
+                logger.warning(
+                    f"[WATCHDOG] Force-clearing stale order {pos.order.order_id[:16]}... "
+                    f"age={pos.order.age_seconds:.0f}s mode={pos.mode}"
+                )
+                try:
+                    await self.execution.cancel_order(pos.order)
+                except Exception:
+                    pass
+                self.order_manager._on_order_cancelled(pos, "watchdog_stale")
+            if stale:
+                logger.warning(f"[WATCHDOG] Cleared {len(stale)} stale orders, capital_deployed reset")
+
             # If trading loop has frozen, force-exit so Railway auto-restarts
             stale_secs = time.time() - self._last_scan_time
             if stale_secs > STALE_LIMIT:
