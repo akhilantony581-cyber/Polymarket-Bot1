@@ -164,7 +164,7 @@ DASHBOARD_HTML = """
   .tag-sniper { background: #f8514922; color: #f85149; border: 1px solid #f85149; }
   .tag-maker { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
   .win { color: #3fb950; } .loss { color: #f85149; }
-  #log { height: 220px; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-size: 11px; }
+  .log-panel { height: 280px; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-size: 11px; }
   .tab-bar { display:flex; gap:8px; padding:0 16px 12px; }
   .tab-btn { padding:8px 20px; border-radius:6px; border:1px solid #30363d; background:#161b22; color:#8b949e; cursor:pointer; font-family:monospace; font-size:13px; font-weight:bold; }
   .tab-btn.active { background:#1f6feb22; border-color:#1f6feb; color:#58a6ff; }
@@ -709,6 +709,9 @@ function setTab(tab) {
 }
 
 function appendLog(line) {
+  // Drop noisy HTTP midpoint polling lines from all tabs
+  if (line.includes('HTTP Request: GET') || line.includes('HTTP/1.1 200')) return;
+
   const isPrices = line.includes('CLOB') || line.includes('Gamma') || line.includes('midpoint') ||
                    line.includes('Market refresh') || line.includes('price') || line.includes('DIAG');
   const isRedeem = line.includes('Redeem') || line.includes('redeem') || line.includes('redeemed');
