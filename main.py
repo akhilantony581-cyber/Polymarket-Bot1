@@ -813,12 +813,17 @@ class TradingBot:
             ],
             "config": {
                 "min_entry": self.config["price"]["min_entry"],
+                "sniper_min": self.config["price"].get("sniper_min", 0.97),
                 "total_capital": self.config["capital"]["total"],
                 "max_concurrent": self.config["capital"]["max_concurrent_trades"],
                 "max_per_trade": self.config["capital"].get("max_per_trade", 10.0),
                 "max_per_market": self.config["capital"].get("max_per_market", 20.0),
-                "min_trading_price": self.config["price"].get("min_entry", 0.99),
                 "snipe2": self.config.get("snipe2", {}),
+                "snipe_1h": self.config.get("snipe_1h", {}),
+                "markets_1h_count": sum(
+                    1 for m in self.poly_listener.markets.values()
+                    if getattr(m, "timeframe", "") == "1h" and not m.is_expired
+                ),
             },
             "prices": self._get_prices(),
         }

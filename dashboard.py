@@ -79,9 +79,22 @@ class PriceRangeUpdate(BaseModel):
 class BudgetUpdate(BaseModel):
     total: float
     max_concurrent: int
-    max_per_trade: float = 10.0
-    max_per_market: float = 20.0
-    min_trading_price: float = 0.99
+
+
+class Bot1Update(BaseModel):
+    sniper_min: float
+    min_entry: float
+    per_trade: float
+    per_market: float
+    window: int = 180
+
+
+class Snipe1hUpdate(BaseModel):
+    enabled: bool = True
+    min_price: float
+    per_trade: float
+    per_market: float
+    window: int = 1500
 
 
 class TradeUpdate(BaseModel):
@@ -152,7 +165,10 @@ DASHBOARD_HTML = """
   .tag-maker { background: #3fb95022; color: #3fb950; border: 1px solid #3fb950; }
   .win { color: #3fb950; } .loss { color: #f85149; }
   #log { height: 220px; overflow-y: auto; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 8px; font-size: 11px; }
-  .log-panel { max-height:300px; overflow-y:auto; font-size:12px; font-family:monospace; }
+  .tab-bar { display:flex; gap:8px; padding:0 16px 12px; }
+  .tab-btn { padding:8px 20px; border-radius:6px; border:1px solid #30363d; background:#161b22; color:#8b949e; cursor:pointer; font-family:monospace; font-size:13px; font-weight:bold; }
+  .tab-btn.active { background:#1f6feb22; border-color:#1f6feb; color:#58a6ff; }
+  .tab-panel { display:none; } .tab-panel.active { display:block; }
   .log-line { margin-bottom: 3px; }
   .log-line.info { color: #8b949e; }
   .log-line.trade { color: #3fb950; }
@@ -209,48 +225,9 @@ DASHBOARD_HTML = """
     </div>
   </div>
 
-  <div class="card">
-    <h3>Price Settings</h3>
-    <div class="control-row">
-      <label>Min Entry Price</label>
-      <input type="range" min="0.90" max="0.999" step="0.001" id="minEntry" oninput="document.getElementById('minEntryVal').textContent=parseFloat(this.value).toFixed(3)">
-      <span class="range-val" id="minEntryVal">0.980</span>
-    </div>
-    <div class="control-row">
-      <label>Sniper Threshold</label>
-      <input type="range" min="0.985" max="0.999" step="0.001" id="sniperMin" oninput="document.getElementById('sniperMinVal').textContent=parseFloat(this.value).toFixed(3)">
-      <span class="range-val" id="sniperMinVal">0.990</span>
-    </div>
-    <button class="btn-save" onclick="savePriceSettings()" style="margin-top:8px">Save Price Settings</button>
-  </div>
 </div>
 
 <div class="grid-2" style="padding-top:0">
-  <div class="card">
-    <h3>Budget Settings</h3>
-    <div class="control-row">
-      <label>Total Capital ($)</label>
-      <input type="number" id="totalCapital" min="10" step="10" value="100">
-    </div>
-    <div class="control-row">
-      <label>Max Concurrent Trades</label>
-      <input type="number" id="maxConcurrent" min="1" max="2000" step="1" value="2000">
-    </div>
-    <div class="control-row">
-      <label>Max Amount Per Trade ($)</label>
-      <input type="number" id="maxPerTrade" min="1" step="1" value="10">
-    </div>
-    <div class="control-row">
-      <label>Max Amount Per Market ($)</label>
-      <input type="number" id="maxPerMarket" min="1" step="1" value="20">
-    </div>
-    <div class="control-row">
-      <label>Min Trading Price</label>
-      <input type="number" id="minTradingPrice" min="0.90" max="0.99" step="0.001" value="0.99">
-    </div>
-    <button class="btn-save" onclick="saveBudget()" style="margin-top:8px">Save Budget</button>
-  </div>
-
   <div class="card">
     <h3>Manual Redeem</h3>
     <div class="control-row">
@@ -260,31 +237,6 @@ DASHBOARD_HTML = """
     <button class="btn-save" onclick="manualRedeem()" style="margin-top:8px;background:#238636">Redeem Now</button>
     <button class="btn-save" onclick="redeemAll()" style="margin-top:8px;margin-left:8px;background:#b08800">Redeem All Positions</button>
     <div id="redeemResult" style="margin-top:8px;font-size:12px;color:#8b949e"></div>
-  </div>
-
-  <div class="card">
-    <h3>Snipe 2 Settings <small style="color:#8b949e;font-size:11px">(last 10s, price ≥ 0.95)</small></h3>
-    <div class="control-row">
-      <label>Enabled</label>
-      <input type="checkbox" id="s2Enabled" checked style="width:auto">
-    </div>
-    <div class="control-row">
-      <label>Min Price</label>
-      <input type="number" id="s2MinPrice" min="0.90" max="0.99" step="0.01" value="0.95">
-    </div>
-    <div class="control-row">
-      <label>Amount Per Trade ($)</label>
-      <input type="number" id="s2PerTrade" min="1" step="1" value="10">
-    </div>
-    <div class="control-row">
-      <label>Max Per Market ($)</label>
-      <input type="number" id="s2PerMarket" min="1" step="1" value="20">
-    </div>
-    <div class="control-row">
-      <label>Window (seconds)</label>
-      <input type="number" id="s2Window" min="5" max="30" step="1" value="10">
-    </div>
-    <button class="btn-save" onclick="saveSnipe2()" style="margin-top:8px">Save Snipe 2</button>
   </div>
 
   <div class="card">
@@ -302,6 +254,147 @@ DASHBOARD_HTML = """
       <input type="number" id="kelly85" min="1" max="20" step="1" value="6">
     </div>
     <button class="btn-save" onclick="saveKelly()" style="margin-top:8px">Save Kelly</button>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- Bot Selector Tabs -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchBot('bot1')">🤖 Bot 1 — 15m Sniper</button>
+  <button class="tab-btn" onclick="switchBot('bot2')">⏱ Bot 2 — 1h Market</button>
+</div>
+
+<!-- BOT 1: 15m Sniper Settings -->
+<div id="bot1Panel" class="tab-panel active">
+<div class="grid-2" style="padding-top:0">
+  <div class="card">
+    <h3>Bot 1 — 15m Sniper Settings</h3>
+    <div class="control-row">
+      <label>Min Price (Sniper)</label>
+      <input type="number" id="b1SniperMin" min="0.80" max="0.999" step="0.001" value="0.97">
+      <span style="color:#8b949e;font-size:11px" id="b1SniperMinVal"></span>
+    </div>
+    <div class="control-row">
+      <label>Min Entry (Hard Floor)</label>
+      <input type="number" id="b1MinEntry" min="0.80" max="0.999" step="0.001" value="0.97">
+    </div>
+    <div class="control-row">
+      <label>Max Per Trade ($)</label>
+      <input type="number" id="b1PerTrade" min="1" max="500" step="1" value="20">
+    </div>
+    <div class="control-row">
+      <label>Max Per Market ($)</label>
+      <input type="number" id="b1PerMarket" min="1" max="500" step="1" value="20">
+    </div>
+    <div class="control-row">
+      <label>Trade Window (seconds)</label>
+      <input type="number" id="b1Window" min="30" max="900" step="10" value="180">
+    </div>
+    <button class="btn-save" onclick="saveBot1()" style="margin-top:8px">💾 Save Bot 1 Settings</button>
+    <div id="bot1Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+  </div>
+
+  <div class="card">
+    <h3>Bot 1 — Snipe 2 (last 10s FOK)</h3>
+    <div class="control-row">
+      <label>Enabled</label>
+      <input type="checkbox" id="s2Enabled" checked style="width:auto">
+    </div>
+    <div class="control-row">
+      <label>Min Price</label>
+      <input type="number" id="s2MinPrice" min="0.80" max="0.99" step="0.01" value="0.95">
+    </div>
+    <div class="control-row">
+      <label>Max Per Trade ($)</label>
+      <input type="number" id="s2PerTrade" min="1" step="1" value="20">
+    </div>
+    <div class="control-row">
+      <label>Max Per Market ($)</label>
+      <input type="number" id="s2PerMarket" min="1" step="1" value="20">
+    </div>
+    <div class="control-row">
+      <label>Window (seconds)</label>
+      <input type="number" id="s2Window" min="5" max="30" step="1" value="10">
+    </div>
+    <button class="btn-save" onclick="saveSnipe2()" style="margin-top:8px">💾 Save Snipe 2</button>
+    <div id="snipe2Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+  </div>
+</div>
+</div>
+
+<!-- BOT 2: 1h Market Settings -->
+<div id="bot2Panel" class="tab-panel">
+<div class="grid-2" style="padding-top:0">
+  <div class="card">
+    <h3>Bot 2 — 1h Market Settings</h3>
+    <div class="control-row">
+      <label>Enabled</label>
+      <input type="checkbox" id="b2Enabled" checked style="width:auto">
+    </div>
+    <div class="control-row">
+      <label>Min Price</label>
+      <input type="number" id="b2MinPrice" min="0.50" max="0.999" step="0.001" value="0.89">
+    </div>
+    <div class="control-row">
+      <label>Max Per Trade ($)</label>
+      <input type="number" id="b2PerTrade" min="1" max="500" step="1" value="10">
+    </div>
+    <div class="control-row">
+      <label>Max Per Market ($)</label>
+      <input type="number" id="b2PerMarket" min="1" max="500" step="1" value="50">
+    </div>
+    <div class="control-row">
+      <label>Trade Window (seconds)</label>
+      <input type="number" id="b2Window" min="60" max="7200" step="60" value="1500">
+    </div>
+    <button class="btn-save" onclick="saveBot2()" style="margin-top:8px">💾 Save Bot 2 Settings</button>
+    <div id="bot2Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+  </div>
+
+  <div class="card">
+    <h3>Bot 2 — Current Parameters</h3>
+    <table>
+      <tbody>
+        <tr><td style="color:#8b949e">Status</td><td id="b2Status">—</td></tr>
+        <tr><td style="color:#8b949e">Min Price</td><td id="b2CurMinPrice">—</td></tr>
+        <tr><td style="color:#8b949e">Per Trade</td><td id="b2CurPerTrade">—</td></tr>
+        <tr><td style="color:#8b949e">Per Market</td><td id="b2CurPerMarket">—</td></tr>
+        <tr><td style="color:#8b949e">Window</td><td id="b2CurWindow">—</td></tr>
+        <tr><td style="color:#8b949e">1h Markets Tracked</td><td id="b2Markets">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</div>
+
+<hr class="divider">
+
+<!-- Shared Settings -->
+<div class="grid-2" style="padding-top:0">
+  <div class="card">
+    <h3>Shared — Capital & Risk</h3>
+    <div class="control-row">
+      <label>Total Capital ($)</label>
+      <input type="number" id="totalCapital" min="10" step="10" value="100">
+    </div>
+    <div class="control-row">
+      <label>Max Concurrent Trades</label>
+      <input type="number" id="maxConcurrent" min="1" max="2000" step="1" value="500">
+    </div>
+    <button class="btn-save" onclick="saveBudget()" style="margin-top:8px">💾 Save Capital</button>
+    <div id="budgetMsg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+  </div>
+
+  <div class="card">
+    <h3>Manual Redeem</h3>
+    <div class="control-row">
+      <label>Condition ID</label>
+      <input type="text" id="redeemConditionId" placeholder="0x..." style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px;font-family:monospace;width:100%">
+    </div>
+    <button class="btn-save" onclick="manualRedeem()" style="margin-top:8px;background:#238636">Redeem Now</button>
+    <button class="btn-save" onclick="redeemAll()" style="margin-top:8px;margin-left:8px;background:#b08800">Redeem All</button>
+    <div id="redeemResult" style="margin-top:8px;font-size:12px;color:#8b949e"></div>
   </div>
 </div>
 
@@ -504,17 +597,36 @@ function _updateStateInner(s) {
       const s2 = s.config.snipe2;
       document.getElementById('s2Enabled').checked  = s2.enabled !== false;
       document.getElementById('s2MinPrice').value   = s2.min_price  || 0.95;
-      document.getElementById('s2PerTrade').value   = s2.per_trade  || 10;
-      document.getElementById('s2PerMarket').value  = s2.per_market || 20;
-      document.getElementById('s2Window').value     = s2.window     || 10;
+      document.getElementById('s2PerTrade').value   = s2.max_per_trade  || 20;
+      document.getElementById('s2PerMarket').value  = s2.max_per_market || 20;
+      document.getElementById('s2Window').value     = s2.window_seconds || 10;
       document.getElementById('s2MinPrice')._loaded = true;
     }
-    if (!document.getElementById('maxPerTrade')._loaded) {
-      document.getElementById('maxPerTrade').value   = s.config.max_per_trade || 10;
-      document.getElementById('maxPerMarket').value  = s.config.max_per_market || 20;
-      document.getElementById('minTradingPrice').value = s.config.min_trading_price || 0.99;
-      document.getElementById('maxPerTrade')._loaded = true;
+    // Bot 1 (15m sniper) fields
+    if (!document.getElementById('b1SniperMin')._loaded) {
+      document.getElementById('b1SniperMin').value  = s.config.sniper_min || 0.97;
+      document.getElementById('b1MinEntry').value   = s.config.min_entry  || 0.97;
+      document.getElementById('b1PerTrade').value   = s.config.max_per_trade  || 20;
+      document.getElementById('b1PerMarket').value  = s.config.max_per_market || 20;
+      document.getElementById('b1SniperMin')._loaded = true;
     }
+    // Bot 2 (1h) fields
+    const s1h = s.config.snipe_1h || {};
+    if (s1h.min_price != null && !document.getElementById('b2MinPrice')._loaded) {
+      document.getElementById('b2Enabled').checked   = s1h.enabled !== false;
+      document.getElementById('b2MinPrice').value    = s1h.min_price    || 0.89;
+      document.getElementById('b2PerTrade').value    = s1h.max_per_trade  || 10;
+      document.getElementById('b2PerMarket').value   = s1h.max_per_market || 50;
+      document.getElementById('b2Window').value      = s1h.window_seconds || 1500;
+      document.getElementById('b2MinPrice')._loaded  = true;
+    }
+    // Bot 2 current params display
+    document.getElementById('b2Status').textContent       = s1h.enabled !== false ? '✅ Enabled' : '⛔ Disabled';
+    document.getElementById('b2CurMinPrice').textContent  = s1h.min_price    != null ? s1h.min_price.toFixed(3)    : '—';
+    document.getElementById('b2CurPerTrade').textContent  = s1h.max_per_trade  != null ? '$'+s1h.max_per_trade      : '—';
+    document.getElementById('b2CurPerMarket').textContent = s1h.max_per_market != null ? '$'+s1h.max_per_market     : '—';
+    document.getElementById('b2CurWindow').textContent    = s1h.window_seconds != null ? s1h.window_seconds+'s'    : '—';
+    document.getElementById('b2Markets').textContent      = s.config.markets_1h_count != null ? s.config.markets_1h_count : '—';
   }
 
   // Active Orders
@@ -624,21 +736,44 @@ function haltBot() { if(confirm('Emergency halt all trading?')) api('/control/ha
 function resetHalt() { api('/control/reset_halt', {}); }
 function wakeBot() { api('/control/wake', {}); }
 
-function savePriceSettings() {
-  api('/settings/price', {
-    min_entry: parseFloat(document.getElementById('minEntry').value),
-    sniper_min: parseFloat(document.getElementById('sniperMin').value),
-  });
+function switchBot(bot) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(bot + 'Panel').classList.add('active');
+  event.target.classList.add('active');
+}
+
+function saveBot1() {
+  const msg = document.getElementById('bot1Msg');
+  api('/settings/bot1', {
+    sniper_min:  parseFloat(document.getElementById('b1SniperMin').value),
+    min_entry:   parseFloat(document.getElementById('b1MinEntry').value),
+    per_trade:   parseFloat(document.getElementById('b1PerTrade').value),
+    per_market:  parseFloat(document.getElementById('b1PerMarket').value),
+    window:      parseInt(document.getElementById('b1Window').value),
+  }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
+  // Reset loaded flag so next state push re-populates
+  document.getElementById('b1SniperMin')._loaded = false;
+}
+
+function saveBot2() {
+  const msg = document.getElementById('bot2Msg');
+  api('/settings/snipe1h', {
+    enabled:    document.getElementById('b2Enabled').checked,
+    min_price:  parseFloat(document.getElementById('b2MinPrice').value),
+    per_trade:  parseFloat(document.getElementById('b2PerTrade').value),
+    per_market: parseFloat(document.getElementById('b2PerMarket').value),
+    window:     parseInt(document.getElementById('b2Window').value),
+  }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
+  document.getElementById('b2MinPrice')._loaded = false;
 }
 
 function saveBudget() {
+  const msg = document.getElementById('budgetMsg');
   api('/settings/budget', {
     total: parseFloat(document.getElementById('totalCapital').value),
     max_concurrent: parseInt(document.getElementById('maxConcurrent').value),
-    max_per_trade: parseFloat(document.getElementById('maxPerTrade').value),
-    max_per_market: parseFloat(document.getElementById('maxPerMarket').value),
-    min_trading_price: parseFloat(document.getElementById('minTradingPrice').value),
-  });
+  }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
 }
 
 async function redeemAll() {
@@ -1027,20 +1162,52 @@ async def update_budget(data: BudgetUpdate):
     config = load_config()
     config["capital"]["total"] = data.total
     config["capital"]["max_concurrent_trades"] = data.max_concurrent
-    config["capital"]["max_per_trade"] = data.max_per_trade
-    config["capital"]["max_per_market"] = data.max_per_market
-    config["price"]["min_entry"] = round(data.min_trading_price, 4)
-    config["price"]["sniper_min"] = round(data.min_trading_price, 4)
     save_config(config)
-    # Also update live bot config immediately (don't wait for file watcher)
     bot = get_bot()
     if bot:
-        bot.config["capital"]["max_per_trade"] = data.max_per_trade
-        bot.config["capital"]["max_per_market"] = data.max_per_market
         bot.config["capital"]["total"] = data.total
         bot.config["capital"]["max_concurrent_trades"] = data.max_concurrent
-        bot.config["price"]["min_entry"] = round(data.min_trading_price, 4)
-    return {"message": f"Budget updated — trades will now use ${data.max_per_trade} per order"}
+    return {"message": f"Capital updated — total=${data.total}, max_concurrent={data.max_concurrent}"}
+
+
+@app.post("/settings/bot1")
+async def update_bot1(data: Bot1Update):
+    if data.sniper_min < 0.80 or data.min_entry < 0.80:
+        raise HTTPException(400, "Price floors cannot be below 0.80")
+    config = load_config()
+    config["price"]["sniper_min"] = round(data.sniper_min, 4)
+    config["price"]["min_entry"] = round(data.min_entry, 4)
+    config["capital"]["max_per_trade"] = data.per_trade
+    config["capital"]["max_per_market"] = data.per_market
+    config["sniper"]["order_timeout_seconds"] = data.window
+    save_config(config)
+    bot = get_bot()
+    if bot:
+        bot.config["price"]["sniper_min"] = round(data.sniper_min, 4)
+        bot.config["price"]["min_entry"] = round(data.min_entry, 4)
+        bot.config["capital"]["max_per_trade"] = data.per_trade
+        bot.config["capital"]["max_per_market"] = data.per_market
+    return {"message": f"Bot 1 updated — sniper_min={data.sniper_min}, min_entry={data.min_entry}, ${data.per_trade}/trade, window={data.window}s"}
+
+
+@app.post("/settings/snipe1h")
+async def update_snipe1h(data: Snipe1hUpdate):
+    if data.min_price < 0.50:
+        raise HTTPException(400, "min_price cannot be below 0.50")
+    config = load_config()
+    config["snipe_1h"] = {
+        "enabled":        data.enabled,
+        "min_price":      round(data.min_price, 3),
+        "max_per_trade":  data.per_trade,
+        "max_per_market": data.per_market,
+        "window_seconds": data.window,
+    }
+    save_config(config)
+    bot = get_bot()
+    if bot:
+        bot.config["snipe_1h"] = config["snipe_1h"]
+    status = "enabled" if data.enabled else "disabled"
+    return {"message": f"Bot 2 updated — {status}, min={data.min_price}, ${data.per_trade}/trade, window={data.window}s"}
 
 
 @app.post("/settings/trade")
