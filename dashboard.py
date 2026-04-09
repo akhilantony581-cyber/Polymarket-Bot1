@@ -471,10 +471,12 @@ DASHBOARD_HTML = """
 <div class="section-pad">
   <div class="card">
     <h3>Active Orders</h3>
-    <table>
-      <thead><tr><th>Market</th><th>Coin</th><th>Mode</th><th>Price</th><th>Size</th><th>Age</th><th>Action</th></tr></thead>
-      <tbody id="activeOrders"><tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">No active orders</td></tr></tbody>
-    </table>
+    <div style="max-height:300px;overflow-y:auto">
+      <table style="width:100%">
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Market</th><th>Coin</th><th>Mode</th><th>Price</th><th>Size</th><th>Age</th><th>Action</th></tr></thead>
+        <tbody id="activeOrders"><tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">No active orders</td></tr></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -482,10 +484,12 @@ DASHBOARD_HTML = """
 <div class="section-pad">
   <div class="card">
     <h3>Open Positions (Filled)</h3>
-    <table>
-      <thead><tr><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>Status</th><th>PnL</th><th>Exit</th></tr></thead>
-      <tbody id="positions"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
-    </table>
+    <div style="max-height:300px;overflow-y:auto">
+      <table style="width:100%">
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>Status</th><th>PnL</th><th>Exit</th></tr></thead>
+        <tbody id="positions"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -493,10 +497,12 @@ DASHBOARD_HTML = """
 <div class="section-pad">
   <div class="card">
     <h3>Recent Trades</h3>
-    <table>
-      <thead><tr><th>Time</th><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>PnL</th><th>Result</th></tr></thead>
-      <tbody id="recentTrades"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No trades yet</td></tr></tbody>
-    </table>
+    <div style="max-height:300px;overflow-y:auto">
+      <table style="width:100%">
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Time</th><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>PnL</th><th>Result</th></tr></thead>
+        <tbody id="recentTrades"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No trades yet</td></tr></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
