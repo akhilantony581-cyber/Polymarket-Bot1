@@ -208,8 +208,8 @@ def get_stats() -> dict:
                COUNT(*) AS total,
                COALESCE(SUM(win),0) AS wins,
                COALESCE(SUM(CASE WHEN win=0 THEN 1 ELSE 0 END),0) AS losses,
-               ROUND(AVG(CAST(win AS FLOAT))*100,1) AS win_rate,
-               ROUND(SUM(COALESCE(pnl,0)),4) AS total_pnl
+               ROUND((AVG(win::NUMERIC)*100)::NUMERIC,1) AS win_rate,
+               ROUND(SUM(COALESCE(pnl,0))::NUMERIC,4) AS total_pnl
         FROM trades WHERE win IS NOT NULL
         GROUP BY bot,coin,timeframe,mode ORDER BY bot,total DESC
     """
@@ -217,11 +217,11 @@ def get_stats() -> dict:
         SELECT COUNT(*) AS total,
                COALESCE(SUM(win),0) AS wins,
                COALESCE(SUM(CASE WHEN win=0 THEN 1 ELSE 0 END),0) AS losses,
-               ROUND(AVG(CAST(win AS FLOAT))*100,1) AS win_rate,
-               ROUND(SUM(COALESCE(pnl,0)),4) AS total_pnl
+               ROUND((AVG(win::NUMERIC)*100)::NUMERIC,1) AS win_rate,
+               ROUND(SUM(COALESCE(pnl,0))::NUMERIC,4) AS total_pnl
         FROM trades WHERE win IS NOT NULL
     """
-    bot_q = "SELECT COUNT(*) AS total, COALESCE(SUM(win),0) AS wins, ROUND(SUM(COALESCE(pnl,0)),4) AS pnl FROM trades WHERE bot={ph} AND win IS NOT NULL"
+    bot_q = "SELECT COUNT(*) AS total, COALESCE(SUM(win),0) AS wins, ROUND(SUM(COALESCE(pnl,0))::NUMERIC,4) AS pnl FROM trades WHERE bot={ph} AND win IS NOT NULL"
 
     if _USE_PG:
         conn = _pg()
