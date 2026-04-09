@@ -837,6 +837,7 @@ class TradingBot:
                 "max_per_market": self.config["capital"].get("max_per_market", 20.0),
                 "snipe2": self.config.get("snipe2", {}),
                 "snipe_1h": self.config.get("snipe_1h", {}),
+                "copy_trader": self.config.get("copy_trader", {}),
                 "markets_1h_count": sum(
                     1 for m in self.poly_listener.markets.values()
                     if getattr(m, "timeframe", "") == "1h" and not m.is_expired

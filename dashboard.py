@@ -111,6 +111,13 @@ class Snipe1hUpdate(BaseModel):
     window: int = 1500
 
 
+class Bot3Update(BaseModel):
+    enabled: bool = True
+    min_price: float = 0.89
+    max_per_market: float = 100.0
+    poll_interval: int = 5
+
+
 class TradeUpdate(BaseModel):
     kelly_score_95: float
     kelly_score_90: float
@@ -301,6 +308,7 @@ DASHBOARD_HTML = """
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchBot('bot1')">🤖 Bot 1 — 15m Sniper</button>
   <button class="tab-btn" onclick="switchBot('bot2')">⏱ Bot 2 — 1h Market</button>
+  <button class="tab-btn" onclick="switchBot('bot3')">📋 Bot 3 — Copy Trader</button>
 </div>
 
 <!-- BOT 1: 15m Sniper Settings -->
@@ -400,6 +408,48 @@ DASHBOARD_HTML = """
         <tr><td style="color:#8b949e">Per Market</td><td id="b2CurPerMarket">—</td></tr>
         <tr><td style="color:#8b949e">Window</td><td id="b2CurWindow">—</td></tr>
         <tr><td style="color:#8b949e">1h Markets Tracked</td><td id="b2Markets">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+</div>
+
+<!-- BOT 3: Copy Trader Settings -->
+<div id="bot3Panel" class="tab-panel">
+<div class="grid-2" style="padding-top:0">
+  <div class="card">
+    <h3>Bot 3 — Copy Trader Settings</h3>
+    <div class="control-row">
+      <label>Min Price</label>
+      <input type="number" id="b3MinPrice" min="0.50" max="0.999" step="0.001" value="0.89">
+    </div>
+    <div class="control-row">
+      <label>Max Per Market ($)</label>
+      <input type="number" id="b3MaxPerMarket" min="5" max="500" step="5" value="100">
+    </div>
+    <div class="control-row">
+      <label>Poll Interval (s)</label>
+      <input type="number" id="b3PollInterval" min="2" max="60" step="1" value="5">
+    </div>
+    <div class="control-row">
+      <label>Enabled</label>
+      <select id="b3Enabled" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px">
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </div>
+    <button class="btn-save" onclick="saveBot3()" style="margin-top:8px">💾 Save Bot 3</button>
+    <div id="bot3Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+  </div>
+  <div class="card">
+    <h3>Bot 3 — Current Status</h3>
+    <table>
+      <tbody>
+        <tr><td style="color:#8b949e">Status</td><td id="b3Status">—</td></tr>
+        <tr><td style="color:#8b949e">Target Wallet</td><td id="b3Wallet" style="font-size:10px;font-family:monospace;word-break:break-all">—</td></tr>
+        <tr><td style="color:#8b949e">Min Price</td><td id="b3CurMinPrice">—</td></tr>
+        <tr><td style="color:#8b949e">Max Per Market</td><td id="b3CurPerMarket">—</td></tr>
+        <tr><td style="color:#8b949e">Poll Interval</td><td id="b3CurPollInterval">—</td></tr>
       </tbody>
     </table>
   </div>
@@ -688,6 +738,21 @@ function _updateStateInner(s) {
     document.getElementById('b2Markets').textContent      = s.config.markets_1h_count != null ? s.config.markets_1h_count : '—';
   }
 
+  // Bot 3 status
+  const sct = s.config.copy_trader || {};
+  document.getElementById('b3Status').textContent          = sct.enabled !== false ? '✅ Enabled' : '⛔ Disabled';
+  document.getElementById('b3Wallet').textContent          = sct.target_wallet || '—';
+  document.getElementById('b3CurMinPrice').textContent     = sct.min_price      != null ? sct.min_price.toFixed(3)      : '—';
+  document.getElementById('b3CurPerMarket').textContent    = sct.max_per_market  != null ? '$'+sct.max_per_market        : '—';
+  document.getElementById('b3CurPollInterval').textContent = sct.poll_interval_seconds != null ? sct.poll_interval_seconds+'s' : '—';
+  if (sct.min_price && !document.getElementById('b3MinPrice')._loaded) {
+    document.getElementById('b3MinPrice').value      = sct.min_price;
+    document.getElementById('b3MaxPerMarket').value  = sct.max_per_market || 100;
+    document.getElementById('b3PollInterval').value  = sct.poll_interval_seconds || 5;
+    document.getElementById('b3Enabled').value       = sct.enabled !== false ? 'true' : 'false';
+    document.getElementById('b3MinPrice')._loaded    = true;
+  }
+
   // Active Orders
   const aoTbody = document.getElementById('activeOrders');
   if (!s.active_orders || s.active_orders.length === 0) {
@@ -828,6 +893,16 @@ function saveBot2() {
     window:     parseInt(document.getElementById('b2Window').value),
   }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
   document.getElementById('b2MinPrice')._loaded = false;
+}
+
+function saveBot3() {
+  const msg = document.getElementById('bot3Msg');
+  api('/settings/bot3', {
+    enabled:       document.getElementById('b3Enabled').value === 'true',
+    min_price:     parseFloat(document.getElementById('b3MinPrice').value),
+    max_per_market:parseFloat(document.getElementById('b3MaxPerMarket').value),
+    poll_interval: parseInt(document.getElementById('b3PollInterval').value),
+  }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
 }
 
 function saveBudget() {
@@ -1372,6 +1447,28 @@ async def update_snipe1h(data: Snipe1hUpdate):
         bot.config["snipe_1h"] = config["snipe_1h"]
     status = "enabled" if data.enabled else "disabled"
     return {"message": f"Bot 2 updated — {status}, min={data.min_price}, ${data.per_trade}/trade, window={data.window}s"}
+
+
+@app.post("/settings/bot3")
+async def update_bot3(data: Bot3Update):
+    if data.min_price < 0.50:
+        raise HTTPException(400, "min_price cannot be below 0.50")
+    config = load_config()
+    config.setdefault("copy_trader", {}).update({
+        "enabled":              data.enabled,
+        "min_price":            round(data.min_price, 3),
+        "max_per_market":       data.max_per_market,
+        "poll_interval_seconds": data.poll_interval,
+    })
+    save_config(config)
+    bot = get_bot()
+    if bot:
+        bot.config.setdefault("copy_trader", {}).update(config["copy_trader"])
+        bot.copy_trader.min_price      = data.min_price
+        bot.copy_trader.max_per_market = data.max_per_market
+        bot.copy_trader.poll_interval  = data.poll_interval
+    status = "enabled" if data.enabled else "disabled"
+    return {"message": f"Bot 3 updated — {status}, min={data.min_price}, max/market=${data.max_per_market}"}
 
 
 @app.post("/settings/trade")
