@@ -990,7 +990,9 @@ async function runAnalysis() {
   status.textContent = 'Running AI analysis... this may take 10-20 seconds';
   box.style.display = 'none';
   try {
-    const res = await fetch('/analyze', {method:'POST'}).then(r=>r.json());
+    const r = await fetch('/analyze', {method:'POST'});
+    const res = await r.json().catch(() => ({error: `Server error ${r.status}`}));
+    if (res.error) { status.textContent = 'Error: ' + res.error; btn.disabled = false; btn.textContent = 'Analyze Trades'; return; }
     if (res.analysis) {
       box.textContent = res.analysis;
       box.style.display = 'block';
@@ -1395,7 +1397,8 @@ Be direct and specific."""
             _tdb.save_analysis(analysis_text, stats)
         return {"analysis": analysis_text, "stats": stats, "from_cache": False}
     except Exception as e:
-        raise HTTPException(500, f"Analysis failed: {e}")
+        logger.error(f"Analysis failed: {e}", exc_info=True)
+        return {"error": str(e), "analysis": None}
 
 
 @app.post("/positions/exit")
