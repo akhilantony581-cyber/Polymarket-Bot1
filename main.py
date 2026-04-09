@@ -823,7 +823,6 @@ class TradingBot:
                     "size": p.entry_usdc,
                     "redeemed": p.redeemed,
                     "pnl": p.pnl,
-                    "held_seconds": round(time.time() - p.opened_at),
                 }
                 for p in self.order_manager.filled_positions.values()
                 if not p.redeemed

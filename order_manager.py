@@ -312,22 +312,7 @@ class OrderManager:
 
                 # Redeem current-session filled positions as they expire
                 for order_id, pos in list(self.filled_positions.items()):
-                    if pos.redeemed:
-                        continue
-
-                    # Auto-purge: market expired > 3h ago and still not redeemed
-                    # (redemption tx keeps failing) — mark as loss and stop retrying
-                    if pos.market.is_expired and time.time() - pos.market.expiry_timestamp > 10800:
-                        logger.warning(
-                            f"Position {order_id[:16]} stuck unredeemed 3h after expiry "
-                            f"— marking as loss and purging"
-                        )
-                        pos.mark_redeemed(0.0)  # assume loss
-                        if self.on_redeem:
-                            self.on_redeem(pos)
-                        continue
-
-                    if not pos.market.is_expired:
+                    if pos.redeemed or not pos.market.is_expired:
                         continue
                     if time.time() - pos.last_redeem_attempt < self.REDEEM_RETRY_INTERVAL:
                         continue
