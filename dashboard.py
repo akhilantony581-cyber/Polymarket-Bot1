@@ -506,9 +506,9 @@ DASHBOARD_HTML = """
     <h3>Transaction Log <span style="color:#8b949e;font-size:10px;font-weight:normal;margin-left:8px">All-time history</span>
       <button onclick="loadTxLog()" style="float:right;background:#1f6feb;color:#fff;padding:4px 10px;border:none;border-radius:4px;cursor:pointer;font-size:11px">Refresh</button>
     </h3>
-    <div style="overflow-x:auto">
-    <table>
-      <thead><tr><th>Time</th><th>Coin</th><th>TF</th><th>Side</th><th>Mode</th><th>Entry</th><th>Size</th><th>PnL</th><th>Result</th></tr></thead>
+    <div style="overflow-x:auto; max-height:400px; overflow-y:auto; border:1px solid #21262d; border-radius:4px;">
+    <table style="min-width:100%">
+      <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Time</th><th>Coin</th><th>TF</th><th>Side</th><th>Mode</th><th>Entry</th><th>Size</th><th>PnL</th><th>Result</th></tr></thead>
       <tbody id="txLog"><tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">Click Refresh to load</td></tr></tbody>
     </table>
     </div>
