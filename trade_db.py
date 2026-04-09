@@ -152,7 +152,6 @@ def log_trade(*, bot, coin, timeframe, mode, side="yes", entry_price,
                     INSERT INTO trades
                     (timestamp,bot,coin,timeframe,mode,side,entry_price,entry_usdc,pnl,win,market_id,order_id)
                     VALUES ({ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph},{ph})
-                    ON CONFLICT (order_id) DO UPDATE SET pnl=EXCLUDED.pnl, win=EXCLUDED.win
                 """, (time.time(), bot, coin, timeframe, mode, side,
                       entry_price, entry_usdc, pnl, win_int, market_id, order_id))
             conn.commit()
