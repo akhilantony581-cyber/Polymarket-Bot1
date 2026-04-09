@@ -562,16 +562,57 @@ class ExecutionEngine:
             }, timeout=15.0)
             result = send_resp.json()
 
-            if "result" in result and result["result"]:
-                logger.info(f"Redeem tx sent: {result['result']} condition={condition_id[:16]}...")
-                return True
-            else:
+            if "result" not in result or not result["result"]:
                 logger.error(f"Redeem tx failed: {result.get('error', result)}")
-                return False
+                return None
+
+            tx_hash = result["result"]
+            logger.info(f"Redeem tx sent: {tx_hash} condition={condition_id[:16]}...")
+
+            # Wait for receipt and parse USDC Transfer log to get actual proceeds
+            usdc_received = await self._wait_redeem_receipt(tx_hash, proxy_wallet, rpc_url)
+            logger.info(f"Redeem proceeds: {usdc_received:.4f} USDC condition={condition_id[:16]}")
+            return usdc_received
 
         except Exception as e:
             logger.error(f"Redeem exception: {e}", exc_info=True)
-            return False
+            return None
+
+    async def _wait_redeem_receipt(self, tx_hash: str, wallet: str, rpc_url: str) -> float:
+        """
+        Poll for tx receipt and sum USDC Transfer(to=wallet) log amounts.
+        Returns USDC received (0.0 for a losing redeem, >0 for a win).
+        """
+        USDC_E = "0x2791bca1f2de4661ed88a30c99a7a9449aa84174"
+        # ERC-20 Transfer(address indexed from, address indexed to, uint256 value)
+        TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        wallet_padded = "0x" + wallet.lower().replace("0x", "").zfill(64)
+
+        for _ in range(15):  # up to ~15s
+            await asyncio.sleep(1.0)
+            try:
+                resp = await self._rpc_http.post(rpc_url, json={
+                    "jsonrpc": "2.0", "method": "eth_getTransactionReceipt",
+                    "params": [tx_hash], "id": 4,
+                }, timeout=8.0)
+                receipt = resp.json().get("result")
+                if not receipt:
+                    continue  # not mined yet
+
+                total = 0.0
+                for log in receipt.get("logs", []):
+                    if (log.get("address", "").lower() == USDC_E
+                            and log.get("topics", [None, None, None])[2] == wallet_padded
+                            and log.get("topics", [None])[0] == TRANSFER_TOPIC):
+                        # USDC has 6 decimals
+                        raw = int(log["data"], 16)
+                        total += raw / 1_000_000
+                return total
+            except Exception as e:
+                logger.debug(f"Receipt poll error: {e}")
+
+        logger.warning(f"Redeem receipt not found after 15s for {tx_hash}")
+        return 0.0
 
     async def close(self):
         if self._http:
