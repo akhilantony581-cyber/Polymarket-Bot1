@@ -193,6 +193,12 @@ class TradingBot:
         _diag_tick = 0
         while self._running:
             try:
+                # Keep markets alive until all positions in them are redeemed
+                self.poly_listener._protected_market_ids = {
+                    pos.market.market_id
+                    for pos in self.order_manager.filled_positions.values()
+                    if not pos.redeemed
+                }
                 await self._scan_markets()
                 await self._scan_maker_both_sides()
                 self._last_scan_time = time.time()

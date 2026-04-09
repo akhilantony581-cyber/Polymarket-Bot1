@@ -316,8 +316,9 @@ class PolymarketListener:
         # Fetch 1h markets via tag (they use date-based slugs, not epoch-based)
         await self._refresh_1h_markets()
 
-        # Prune expired markets so they don't accumulate across cycles
-        expired_ids = [mid for mid, m in self.markets.items() if m.is_expired]
+        # Prune expired markets — but keep any market that still has an unredeemed position
+        protected = getattr(self, "_protected_market_ids", set())
+        expired_ids = [mid for mid, m in self.markets.items() if m.is_expired and mid not in protected]
         for mid in expired_ids:
             del self.markets[mid]
         if expired_ids:

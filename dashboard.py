@@ -907,7 +907,7 @@ setInterval(() => fetch('/ping').catch(()=>{}), 5 * 60 * 1000);
 // Auto-load stats and tx log on page load, then refresh periodically
 loadStats();
 loadTxLog();
-setInterval(loadStats, 60000);
+setInterval(loadStats, 15000);
 setInterval(loadTxLog, 120000);
 
 // Transaction Log
