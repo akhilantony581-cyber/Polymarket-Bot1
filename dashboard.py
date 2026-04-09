@@ -955,6 +955,15 @@ async function loadStats() {
   try {
     const d = await fetch('/stats').then(r => r.json());
     const s = d.summary || {};
+    // Update top metric cards from persistent DB data
+    if (s.total_trades > 0) {
+      const pnl = s.total_pnl || 0;
+      document.getElementById('totalPnl').textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(4)}`;
+      document.getElementById('totalPnl').className = 'metric-value ' + (pnl >= 0 ? 'positive' : 'negative');
+      document.getElementById('winRate').textContent = `Win rate: ${s.win_rate_pct || 0}%`;
+      document.getElementById('totalTrades').textContent = s.total_trades || 0;
+      document.getElementById('winsLosses').textContent = `${s.wins || 0}W / ${s.losses || 0}L`;
+    }
     const pnlColor = (s.total_pnl || 0) >= 0 ? '#3fb950' : '#f85149';
     document.getElementById('statsSummary').innerHTML = `
       <span style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:4px 12px">Trades: <b>${s.total_trades||0}</b></span>
