@@ -26,9 +26,9 @@ price:
 
 # --- Signal Engine ---
 signal:
-  reversal_score_threshold: 10     # Only trade when score < 10 (0–100 scale)
+  reversal_score_threshold: 5      # Only trade when score < 5 (0–100 scale)
   buffer_from_strike_pct: 0.003    # Binance price must be this % beyond strike
-  stability_window_seconds: 30     # Price must hold beyond strike for this long
+  stability_window_seconds: 45     # Price must hold beyond strike for this long
   momentum_windows: [60, 180, 300] # 1m, 3m, 5m in seconds
 
 # --- Standard Mode ---
@@ -79,7 +79,7 @@ market_maker:
 # Blocks trades when Binance price is running against the direction being bought,
 # or when price has barely moved (too close to boundary to be confident).
 momentum_gate:
-  enabled: false
+  enabled: true
   window_seconds: 30
   min_pct: 0.01
   boundary_pct: 0.03
