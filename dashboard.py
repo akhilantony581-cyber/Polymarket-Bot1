@@ -1129,50 +1129,6 @@ async function loadTxLog() {
   `;
 }
 
-async function refreshLivePositions() {
-  const tbody = document.getElementById('positions');
-  tbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">Loading...</td></tr>';
-  try {
-    const d = await fetch('/positions/live').then(r => r.json());
-    if (d.detail) {
-      tbody.innerHTML = `<tr><td colspan="8" style="color:#f85149;text-align:center;padding:16px">${d.detail}</td></tr>`;
-      return;
-    }
-    const positions = d.positions || [];
-    if (positions.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions on Polymarket</td></tr>';
-      return;
-    }
-    tbody.innerHTML = positions.map(p => {
-      const cur  = parseFloat(p.currentValue  || p.curValue  || 0);
-      const init = parseFloat(p.initialValue  || p.initValue || 0);
-      const size = parseFloat(p.size || 0);
-      const pnl  = cur - init;
-      const pnlCls = pnl >= 0 ? 'color:#3fb950' : 'color:#f85149';
-      const pnlStr = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(4);
-      const title  = p.title || p.market || p.conditionId?.substring(0,20) || '—';
-      const outcome = p.outcome || '—';
-      const redeemable = p.redeemable ? '<span style="color:#3fb950">✓ Yes</span>' : '—';
-      const botLabel = p.bot || '—';
-      const botColor = botLabel === 'Bot1' ? '#58a6ff' : botLabel === 'Bot2' ? '#bc8cff' : botLabel === 'Bot3' ? '#3fb950' : '#8b949e';
-      const botBadge = botLabel !== '—'
-        ? `<span style="background:${botColor}22;color:${botColor};padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600">${botLabel}</span>`
-        : '—';
-      return `<tr>
-        <td>${botBadge}</td>
-        <td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title}">${title}</td>
-        <td>${outcome}</td>
-        <td>${size.toFixed(4)}</td>
-        <td>$${cur.toFixed(4)}</td>
-        <td>$${init.toFixed(4)}</td>
-        <td style="${pnlCls}">${pnlStr}</td>
-        <td>${redeemable}</td>
-      </tr>`;
-    }).join('');
-  } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="7" style="color:#f85149;text-align:center;padding:16px">Error: ${e.message}</td></tr>`;
-  }
-}
 
 async function loadBotSummary() {
   try {
