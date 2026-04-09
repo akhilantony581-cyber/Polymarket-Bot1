@@ -904,9 +904,11 @@ setInterval(() => fetch('/state').then(r=>r.json()).then(d=>updateState(d)), 300
 // Keepalive ping every 5 minutes — prevents browser tab sleep and proxy idle timeouts
 setInterval(() => fetch('/ping').catch(()=>{}), 5 * 60 * 1000);
 
-// Auto-load stats on page load, then refresh every 60s
+// Auto-load stats and tx log on page load, then refresh periodically
 loadStats();
+loadTxLog();
 setInterval(loadStats, 60000);
+setInterval(loadTxLog, 120000);
 
 // Transaction Log
 async function loadTxLog() {
@@ -1322,7 +1324,7 @@ def read_trade_log(limit: int = 200) -> list:
 @app.get("/trades/log")
 async def get_trade_log(bot: str = "", limit: int = 300):
     if _tdb:
-        return _tdb.get_trades(limit=limit, bot=bot or None, resolved_only=True)
+        return _tdb.get_trades(limit=limit, bot=bot or None, resolved_only=False)
     return read_trade_log(200)
 
 
@@ -1467,8 +1469,30 @@ async def ping():
 
 @app.get("/stats")
 async def get_stats():
+    def _norm_summary(s: dict) -> dict:
+        """Normalise DB field names to what the dashboard JS expects."""
+        return {
+            "total_trades": s.get("total_trades") or s.get("total") or 0,
+            "wins":         s.get("wins") or 0,
+            "losses":       s.get("losses") or 0,
+            "win_rate_pct": s.get("win_rate_pct") or s.get("win_rate") or 0,
+            "total_pnl":    s.get("total_pnl") or 0,
+        }
+    def _norm_row(r: dict) -> dict:
+        return {**r,
+            "win_rate_pct": r.get("win_rate_pct") or r.get("win_rate") or 0,
+            "pnl":          r.get("pnl") or r.get("total_pnl") or 0,
+        }
     if _tdb:
-        return _tdb.get_stats()
+        raw = _tdb.get_stats()
+        rows = raw.get("rows", [])
+        rows = rows if isinstance(rows, list) else [rows]
+        return {
+            "summary": _norm_summary(raw.get("summary", {})),
+            "bot1":    _norm_summary(raw.get("bot1", {})),
+            "bot2":    _norm_summary(raw.get("bot2", {})),
+            "rows":    [_norm_row(r) for r in rows],
+        }
     bot = get_bot()
     if not bot:
         return {"summary": {}, "bot1": {}, "bot2": {}, "rows": []}
