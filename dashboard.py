@@ -194,6 +194,14 @@ DASHBOARD_HTML = """
   .log-tab.active { background:#388bfd22; border-color:#388bfd; color:#58a6ff; }
   .section-pad { padding: 0 16px 16px; }
   .divider { border: none; border-top: 1px solid #21262d; margin: 0 16px 16px; }
+  .bot-summary-card { background:#0d1117; border:1px solid #30363d; border-radius:6px; padding:12px; }
+  .bot-summary-card h4 { color:#58a6ff; font-size:12px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.5px; }
+  .bs-table { width:100%; border-collapse:collapse; font-size:12px; }
+  .bs-table th { color:#8b949e; font-weight:500; text-align:left; padding:4px 6px; border-bottom:1px solid #21262d; }
+  .bs-table td { padding:5px 6px; color:#e6edf3; }
+  .bs-table tr.total-row td { border-top:1px solid #30363d; font-weight:600; color:#58a6ff; }
+  .bs-table .pos { color:#3fb950; }
+  .bs-table .neg { color:#f85149; }
 </style>
 </head>
 <body>
@@ -268,6 +276,22 @@ DASHBOARD_HTML = """
       <input type="number" id="kelly85" min="1" max="20" step="1" value="6">
     </div>
     <button class="btn-save" onclick="saveKelly()" style="margin-top:8px">Save Kelly</button>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- Bot Performance Summary -->
+<div class="section-pad">
+  <div class="card">
+    <h3>Bot Performance Summary
+      <button onclick="loadBotSummary()" style="float:right;background:#238636;color:#fff;padding:4px 14px;border:none;border-radius:4px;cursor:pointer;font-size:11px">Refresh</button>
+    </h3>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px" id="botSummaryGrid">
+      <div id="bsBot1" class="bot-summary-card"></div>
+      <div id="bsBot2" class="bot-summary-card"></div>
+      <div id="bsBot3" class="bot-summary-card"></div>
+    </div>
   </div>
 </div>
 
@@ -914,8 +938,10 @@ setInterval(() => fetch('/ping').catch(()=>{}), 5 * 60 * 1000);
 // Auto-load stats and tx log on page load, then refresh periodically
 loadStats();
 loadTxLog();
+loadBotSummary();
 setInterval(loadStats, 15000);
 setInterval(loadTxLog, 120000);
+setInterval(loadBotSummary, 30000);
 
 // Transaction Log
 async function loadTxLog() {
@@ -957,6 +983,69 @@ async function loadTxLog() {
   `;
 }
 
+async function loadBotSummary() {
+  try {
+    const d = await fetch('/bot-summary').then(r => r.json());
+
+    function fmtPnl(v) {
+      v = parseFloat(v) || 0;
+      return `<span class="${v >= 0 ? 'pos' : 'neg'}">${v >= 0 ? '+' : ''}$${Math.abs(v).toFixed(2)}</span>`;
+    }
+    function fmtVol(v) { return '$' + (parseFloat(v)||0).toFixed(2); }
+    function fmtWr(v)  { return (parseFloat(v)||0).toFixed(1) + '%'; }
+
+    function row(label, s, isTotal) {
+      if (!s) return '';
+      const cls = isTotal ? ' class="total-row"' : '';
+      return `<tr${cls}>
+        <td>${label}</td>
+        <td>${s.trades||0}</td>
+        <td>${fmtVol(s.volume)}</td>
+        <td>${fmtPnl(s.profit)}</td>
+        <td>${fmtWr(s.win_rate)}</td>
+      </tr>`;
+    }
+
+    // Bot 1
+    const b1 = d.bot1 || {};
+    document.getElementById('bsBot1').innerHTML = `
+      <h4>Bot 1 — 15m Sniper</h4>
+      <table class="bs-table">
+        <thead><tr><th></th><th>Trades</th><th>Volume</th><th>P&amp;L</th><th>Win %</th></tr></thead>
+        <tbody>
+          ${row('Snipe 1', b1.snipe1)}
+          ${row('Snipe 2', b1.snipe2)}
+          ${row('Total',   b1.total, true)}
+        </tbody>
+      </table>`;
+
+    // Bot 2
+    const b2 = d.bot2 || {};
+    document.getElementById('bsBot2').innerHTML = `
+      <h4>Bot 2 — 1h Sniper</h4>
+      <table class="bs-table">
+        <thead><tr><th></th><th>Trades</th><th>Volume</th><th>P&amp;L</th><th>Win %</th></tr></thead>
+        <tbody>
+          ${row('1h Sniper', b2, true)}
+        </tbody>
+      </table>`;
+
+    // Bot 3
+    const b3 = d.bot3 || {};
+    document.getElementById('bsBot3').innerHTML = `
+      <h4>Bot 3 — Copy Trader</h4>
+      <table class="bs-table">
+        <thead><tr><th></th><th>Trades</th><th>Volume</th><th>P&amp;L</th><th>Win %</th></tr></thead>
+        <tbody>
+          ${row('Copy', b3, true)}
+        </tbody>
+      </table>`;
+
+  } catch(e) {
+    console.error('loadBotSummary error', e);
+  }
+}
+
 async function resetTradeHistory() {
   if (!confirm('Clear ALL trade history from the database? This cannot be undone.')) return;
   const r = await fetch('/admin/reset-trades', {method:'POST'});
@@ -964,6 +1053,7 @@ async function resetTradeHistory() {
   alert(d.message || d.detail);
   loadStats();
   loadTxLog();
+  loadBotSummary();
 }
 
 // AI Analysis
@@ -1543,6 +1633,16 @@ async def get_stats():
         return {"summary": {}, "bot1": {}, "bot2": {}, "rows": []}
     tracker = bot.structured_log.win_rate
     return {"summary": tracker.summary(), "bot1": {}, "bot2": {}, "rows": tracker.get_stats()}
+
+
+@app.get("/bot-summary")
+async def bot_summary():
+    if _tdb:
+        try:
+            return await asyncio.get_event_loop().run_in_executor(None, _tdb.get_bot_summary)
+        except Exception as e:
+            logger.warning(f"bot_summary DB error: {e}")
+    return {"bot1": {"snipe1": {}, "snipe2": {}, "total": {}}, "bot2": {}, "bot3": {}}
 
 
 @app.post("/redeem/all")

@@ -271,6 +271,93 @@ def get_stats() -> dict:
             }
 
 
+# ── Bot performance summary ───────────────────────────────────────────────────
+
+def get_bot_summary() -> dict:
+    """
+    Returns per-bot performance aggregates, with bot1 broken down by mode
+    (sniper = Snipe 1, snipe2 = Snipe 2).
+
+    Shape:
+    {
+      "bot1": {
+        "snipe1":  {trades, volume, profit, wins, losses, win_rate},
+        "snipe2":  {trades, volume, profit, wins, losses, win_rate},
+        "total":   {trades, volume, profit, wins, losses, win_rate},
+      },
+      "bot2": {trades, volume, profit, wins, losses, win_rate},
+      "bot3": {trades, volume, profit, wins, losses, win_rate},
+    }
+    """
+    sql = """
+        SELECT bot, mode,
+               COUNT(*)                                          AS trades,
+               COALESCE(SUM(entry_usdc), 0)                     AS volume,
+               COALESCE(SUM(win), 0)                            AS wins,
+               COALESCE(SUM(CASE WHEN win=0 THEN 1 ELSE 0 END),0) AS losses,
+               COALESCE(SUM(pnl), 0)                            AS profit
+        FROM trades
+        GROUP BY bot, mode
+        ORDER BY bot, mode
+    """
+    if _USE_PG:
+        conn = _pg()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                cols = [d[0] for d in cur.description]
+                rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        finally:
+            _pg_release(conn)
+    else:
+        with _sqlite() as c:
+            rows = [dict(r) for r in c.execute(sql).fetchall()]
+
+    def _row(trades, volume, wins, losses, profit):
+        resolved = wins + losses
+        return {
+            "trades":   int(trades),
+            "volume":   round(float(volume), 2),
+            "profit":   round(float(profit), 4),
+            "wins":     int(wins),
+            "losses":   int(losses),
+            "win_rate": round(wins / resolved * 100, 1) if resolved else 0.0,
+        }
+
+    # Aggregate into the shape callers expect
+    agg: dict = {"bot1": {}, "bot2": {}, "bot3": {}}
+    b1_buckets: dict = {}
+
+    for r in rows:
+        bot  = r["bot"]
+        mode = r["mode"]
+        d    = _row(r["trades"], r["volume"], r["wins"], r["losses"], r["profit"])
+        if bot == "bot1":
+            key = "snipe2" if mode == "snipe2" else "snipe1"
+            b1_buckets[key] = d
+        elif bot in agg:
+            agg[bot] = d
+
+    # Bot 1 total
+    all_b1 = b1_buckets.values()
+    agg["bot1"] = {
+        "snipe1": b1_buckets.get("snipe1", _row(0,0,0,0,0)),
+        "snipe2": b1_buckets.get("snipe2", _row(0,0,0,0,0)),
+        "total": _row(
+            sum(x["trades"] for x in all_b1),
+            sum(x["volume"] for x in all_b1),
+            sum(x["wins"]   for x in all_b1),
+            sum(x["losses"] for x in all_b1),
+            sum(x["profit"] for x in all_b1),
+        ) if b1_buckets else _row(0,0,0,0,0),
+    }
+    for k in ("bot2", "bot3"):
+        if not agg[k]:
+            agg[k] = _row(0,0,0,0,0)
+
+    return agg
+
+
 # ── Analysis cache ────────────────────────────────────────────────────────────
 
 def save_analysis(analysis: str, stats: dict):
