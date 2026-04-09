@@ -562,8 +562,8 @@ DASHBOARD_HTML = """
     </h3>
     <div style="max-height:300px;overflow-y:auto">
       <table style="width:100%">
-        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Market</th><th>Outcome</th><th>Shares</th><th>Cur. Value</th><th>Init. Value</th><th>P&amp;L</th><th>Redeemable</th></tr></thead>
-        <tbody id="positions"><tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">Click ↻ Refresh to load live positions from Polymarket</td></tr></tbody>
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Market</th><th>Outcome</th><th>Shares</th><th>Cur. Value</th><th>Init. Value</th><th>P&amp;L</th><th>Redeemable</th></tr></thead>
+        <tbody id="positions"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">Click ↻ Refresh to load live positions from Polymarket</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1047,16 +1047,16 @@ async function loadTxLog() {
 
 async function refreshLivePositions() {
   const tbody = document.getElementById('positions');
-  tbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">Loading...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">Loading...</td></tr>';
   try {
     const d = await fetch('/positions/live').then(r => r.json());
     if (d.detail) {
-      tbody.innerHTML = `<tr><td colspan="7" style="color:#f85149;text-align:center;padding:16px">${d.detail}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="color:#f85149;text-align:center;padding:16px">${d.detail}</td></tr>`;
       return;
     }
     const positions = d.positions || [];
     if (positions.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">No open positions on Polymarket</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions on Polymarket</td></tr>';
       return;
     }
     tbody.innerHTML = positions.map(p => {
@@ -1069,8 +1069,14 @@ async function refreshLivePositions() {
       const title  = p.title || p.market || p.conditionId?.substring(0,20) || '—';
       const outcome = p.outcome || '—';
       const redeemable = p.redeemable ? '<span style="color:#3fb950">✓ Yes</span>' : '—';
+      const botLabel = p.bot || '—';
+      const botColor = botLabel === 'Bot1' ? '#58a6ff' : botLabel === 'Bot2' ? '#bc8cff' : botLabel === 'Bot3' ? '#3fb950' : '#8b949e';
+      const botBadge = botLabel !== '—'
+        ? `<span style="background:${botColor}22;color:${botColor};padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600">${botLabel}</span>`
+        : '—';
       return `<tr>
-        <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title}">${title}</td>
+        <td>${botBadge}</td>
+        <td style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title}">${title}</td>
         <td>${outcome}</td>
         <td>${size.toFixed(4)}</td>
         <td>$${cur.toFixed(4)}</td>
@@ -1776,6 +1782,35 @@ async def live_positions():
         positions = resp.json() or []
         # Filter to only open (non-zero size) positions
         open_pos = [p for p in positions if float(p.get("size", 0)) > 0.001]
+
+        # Build conditionId → bot label lookup from in-memory filled_positions
+        bot = get_bot()
+        cid_to_bot: dict = {}
+        if bot:
+            all_pos = []
+            try:
+                all_pos = list(getattr(bot.order_manager, "filled_positions", {}).values())
+            except Exception:
+                pass
+            for fp in all_pos:
+                cid = getattr(getattr(fp, "market", None), "condition_id", None)
+                if not cid:
+                    continue
+                mode = getattr(fp, "mode", "")
+                tf   = getattr(getattr(fp, "market", None), "timeframe", "")
+                if mode == "copy":
+                    label = "Bot3"
+                elif tf == "1h":
+                    label = "Bot2"
+                else:
+                    label = "Bot1"
+                cid_to_bot[cid] = label
+
+        # Attach bot label to each position
+        for p in open_pos:
+            cid = p.get("conditionId") or p.get("condition_id", "")
+            p["bot"] = cid_to_bot.get(cid, "—")
+
         return {"positions": open_pos, "count": len(open_pos)}
     except HTTPException:
         raise
