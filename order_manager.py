@@ -335,9 +335,19 @@ class OrderManager:
                         cid = p.get("conditionId") or p.get("condition_id", "")
                         if not cid:
                             continue
-                        success = await self.execution.redeem_position(cid, [])
-                        if success and self.on_redeem:
-                            self.on_redeem(None)
+                        # Match against tracked positions so logging works correctly
+                        match = next(
+                            (fp for fp in self.filled_positions.values()
+                             if getattr(fp.market, "condition_id", "") == cid and not fp.redeemed),
+                            None
+                        )
+                        if match:
+                            await self._attempt_redeem(match)
+                        else:
+                            # Untracked position (previous session) — redeem only
+                            success = await self.execution.redeem_position(cid, [])
+                            if success:
+                                logger.info(f"Redeemed untracked position cid={cid[:16]}")
                         await asyncio.sleep(3)
                 except Exception as e:
                     logger.debug(f"Auto-redeem sweep error: {e}")
@@ -365,7 +375,9 @@ class OrderManager:
         )
 
         if success:
-            proceeds = max(pos.order.filled_size, pos.order.size) * 1.0
+            # Determine WIN/LOSS from final market price (≥0.5 = YES resolved, WIN)
+            tokens = max(pos.order.filled_size, pos.order.size)
+            proceeds = tokens * 1.0 if pos.market.yes_price >= 0.5 else 0.0
             pos.mark_redeemed(proceeds)
             if self.on_redeem:
                 self.on_redeem(pos)
