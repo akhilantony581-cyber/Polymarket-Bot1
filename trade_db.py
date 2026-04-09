@@ -127,6 +127,24 @@ def init_db():
     logger.info(f"TradeDB (SQLite) initialised at {_DB_PATH}")
 
 
+def clear_all_trades():
+    """Delete all rows from trades and analysis_cache tables."""
+    if _USE_PG:
+        conn = _pg()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM trades")
+                cur.execute("DELETE FROM analysis_cache")
+            conn.commit()
+        finally:
+            _pg_release(conn)
+    else:
+        with _sqlite() as c:
+            c.execute("DELETE FROM trades")
+            c.execute("DELETE FROM analysis_cache")
+    logger.info("TradeDB: all trades cleared")
+
+
 # ── Write ─────────────────────────────────────────────────────────────────────
 
 def log_trade(*, bot, coin, timeframe, mode, side="yes", entry_price,

@@ -521,6 +521,7 @@ DASHBOARD_HTML = """
   <div class="card">
     <h3>Win Rate by Coin / Timeframe / Mode
       <button onclick="loadStats()" style="float:right;background:#238636;color:#fff;padding:4px 14px;border:none;border-radius:4px;cursor:pointer;font-size:11px">Refresh</button>
+      <button onclick="resetTradeHistory()" style="float:right;margin-right:6px;background:#b22222;color:#fff;padding:4px 14px;border:none;border-radius:4px;cursor:pointer;font-size:11px">Reset History</button>
     </h3>
     <div id="statsSummary" style="display:flex;gap:24px;margin-bottom:12px;flex-wrap:wrap;font-size:13px"></div>
     <table id="statsTable" style="width:100%;border-collapse:collapse;font-size:12px">
@@ -950,6 +951,15 @@ async function loadTxLog() {
   `;
 }
 
+async function resetTradeHistory() {
+  if (!confirm('Clear ALL trade history from the database? This cannot be undone.')) return;
+  const r = await fetch('/admin/reset-trades', {method:'POST'});
+  const d = await r.json();
+  alert(d.message || d.detail);
+  loadStats();
+  loadTxLog();
+}
+
 // AI Analysis
 async function loadStats() {
   try {
@@ -1190,6 +1200,16 @@ async def wake_bot():
     bot.risk_manager.reset_halt()
     bot.risk_manager._paused = False
     return {"message": "Bot woken — all halts and pauses cleared"}
+
+
+@app.post("/admin/reset-trades")
+async def reset_trades():
+    try:
+        import trade_db as _tdb
+        await asyncio.get_event_loop().run_in_executor(None, _tdb.clear_all_trades)
+        return {"message": "All trade history cleared"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.post("/settings/price")
