@@ -773,25 +773,6 @@ function _updateStateInner(s) {
       </tr>`).join('');
   }
 
-  // Positions
-  const posTbody = document.getElementById('positions');
-  if (!s.positions || s.positions.length === 0) {
-    posTbody.innerHTML = '<tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr>';
-  } else {
-    posTbody.innerHTML = s.positions.map(p => `
-      <tr>
-        <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:#1f6feb33;color:#58a6ff">${p.bot||'—'}</span></td>
-        <td style="font-size:11px">${p.market_id.substring(0,20)}...</td>
-        <td>${p.coin}</td>
-        <td><span class="tag tag-${p.mode}">${p.mode}</span></td>
-        <td>${p.entry_price.toFixed(4)}</td>
-        <td>$${p.size.toFixed(2)}</td>
-        <td>${p.redeemed ? '<span class="win">Redeemed</span>' : 'Holding'}</td>
-        <td class="${p.pnl >= 0 ? 'win' : 'loss'}">${p.pnl !== null ? (p.pnl >= 0 ? '+' : '') + p.pnl.toFixed(4) : '—'}</td>
-        <td>${!p.redeemed ? `<button class="btn-exit" onclick="promptExit('${p.order_id}', ${p.entry_price})">Exit</button>` : '—'}</td>
-      </tr>`).join('');
-  }
-
   // Recent Trades
   const rtTbody = document.getElementById('recentTrades');
   if (!s.recent_trades || s.recent_trades.length === 0) {
