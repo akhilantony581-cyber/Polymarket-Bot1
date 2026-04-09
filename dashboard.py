@@ -557,11 +557,13 @@ DASHBOARD_HTML = """
 <!-- Open Positions -->
 <div class="section-pad">
   <div class="card">
-    <h3>Open Positions (Filled)</h3>
+    <h3>Open Positions (Filled)
+      <button onclick="refreshLivePositions()" style="float:right;background:#238636;color:#fff;padding:4px 14px;border:none;border-radius:4px;cursor:pointer;font-size:11px">↻ Refresh from Polymarket</button>
+    </h3>
     <div style="max-height:300px;overflow-y:auto">
       <table style="width:100%">
-        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>Status</th><th>PnL</th><th>Exit</th></tr></thead>
-        <tbody id="positions"><tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Market</th><th>Outcome</th><th>Shares</th><th>Cur. Value</th><th>Init. Value</th><th>P&amp;L</th><th>Redeemable</th></tr></thead>
+        <tbody id="positions"><tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">Click ↻ Refresh to load live positions from Polymarket</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1058,6 +1060,45 @@ async function loadTxLog() {
     <span>Win Rate: <b>${wr}%</b></span>
     <span class="${totalPnl>=0?'win':'loss'}">Total PnL: <b>${totalPnl>=0?'+':''}$${totalPnl.toFixed(4)}</b></span>
   `;
+}
+
+async function refreshLivePositions() {
+  const tbody = document.getElementById('positions');
+  tbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">Loading...</td></tr>';
+  try {
+    const d = await fetch('/positions/live').then(r => r.json());
+    if (d.detail) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color:#f85149;text-align:center;padding:16px">${d.detail}</td></tr>`;
+      return;
+    }
+    const positions = d.positions || [];
+    if (positions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">No open positions on Polymarket</td></tr>';
+      return;
+    }
+    tbody.innerHTML = positions.map(p => {
+      const cur  = parseFloat(p.currentValue  || p.curValue  || 0);
+      const init = parseFloat(p.initialValue  || p.initValue || 0);
+      const size = parseFloat(p.size || 0);
+      const pnl  = cur - init;
+      const pnlCls = pnl >= 0 ? 'color:#3fb950' : 'color:#f85149';
+      const pnlStr = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(4);
+      const title  = p.title || p.market || p.conditionId?.substring(0,20) || '—';
+      const outcome = p.outcome || '—';
+      const redeemable = p.redeemable ? '<span style="color:#3fb950">✓ Yes</span>' : '—';
+      return `<tr>
+        <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${title}">${title}</td>
+        <td>${outcome}</td>
+        <td>${size.toFixed(4)}</td>
+        <td>$${cur.toFixed(4)}</td>
+        <td>$${init.toFixed(4)}</td>
+        <td style="${pnlCls}">${pnlStr}</td>
+        <td>${redeemable}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:#f85149;text-align:center;padding:16px">Error: ${e.message}</td></tr>`;
+  }
 }
 
 async function loadBotSummary() {
@@ -1732,6 +1773,31 @@ async def get_stats():
         return {"summary": {}, "bot1": {}, "bot2": {}, "rows": []}
     tracker = bot.structured_log.win_rate
     return {"summary": tracker.summary(), "bot1": {}, "bot2": {}, "rows": tracker.get_stats()}
+
+
+@app.get("/positions/live")
+async def live_positions():
+    """Fetch open positions directly from Polymarket data API."""
+    import httpx as _httpx
+    wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
+    if not wallet:
+        raise HTTPException(400, "POLYMARKET_PROXY_WALLET not set")
+    try:
+        async with _httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": wallet, "limit": 500, "sizeThreshold": "0.01"},
+            )
+        if resp.status_code != 200:
+            raise HTTPException(502, f"Polymarket API error {resp.status_code}")
+        positions = resp.json() or []
+        # Filter to only open (non-zero size) positions
+        open_pos = [p for p in positions if float(p.get("size", 0)) > 0.001]
+        return {"positions": open_pos, "count": len(open_pos)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.get("/bot-summary")
