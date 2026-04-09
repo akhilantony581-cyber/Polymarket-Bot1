@@ -435,6 +435,7 @@ class OrderManager:
             "sniper": self.SNIPER_TIMEOUT,
             "snipe2": self.SNIPER_TIMEOUT,
             "maker": self.MAKER_TIMEOUT,
+            "copy": 120,   # 2-minute window for copy-trade limit orders
         }.get(mode, self.STANDARD_TIMEOUT)
 
     @property

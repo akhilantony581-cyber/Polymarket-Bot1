@@ -19,6 +19,7 @@ from execution_engine import ExecutionEngine
 from order_manager import OrderManager, ManagedPosition
 from risk_manager import RiskManager
 from structured_logger import StructuredLogger
+from copy_trader import CopyTrader
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,13 @@ class TradingBot:
             on_redeem=self._on_redeem,
         )
 
+        self.copy_trader = CopyTrader(
+            config=config,
+            order_manager=self.order_manager,
+            binance=self.binance,
+            on_fill=self.structured_log.log_trade_open,
+        )
+
     async def start(self):
         self._running = True
         logger.info("=" * 60)
@@ -94,6 +102,8 @@ class TradingBot:
         await self.binance.start()
         await self.poly_listener.start()
         await self.order_manager.start()
+        if self.config.get("copy_trader", {}).get("enabled", False):
+            await self.copy_trader.start()
 
         # Give feeds time to warm up
         logger.info("Waiting for data feeds to warm up (5s)...")
@@ -110,6 +120,7 @@ class TradingBot:
 
     async def stop(self):
         self._running = False
+        await self.copy_trader.stop()
         await self.binance.stop()
         await self.poly_listener.stop()
         await self.order_manager.stop()

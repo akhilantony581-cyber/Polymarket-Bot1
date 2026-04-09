@@ -112,6 +112,8 @@ class StructuredLogger:
 
     @staticmethod
     def _bot(pos: Any) -> str:
+        if getattr(pos, "mode", "") == "copy":
+            return "bot3"
         return "bot2" if getattr(pos.market, "timeframe", "") == "1h" else "bot1"
 
     def log_trade_open(self, pos: Any):

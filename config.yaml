@@ -101,6 +101,16 @@ snipe_1h:
   window_seconds: 1500   # fire in last 25 minutes of the 1h market
 
 
+# --- Bot 3 — Copy Trader ---
+# Mirrors trades from a target Polymarket wallet.
+# Applies same Binance momentum gate as bot1/bot2.
+copy_trader:
+  enabled: true
+  target_wallet: "0xf247584e41117bbbe4cc06e4d2c95741792a5216"
+  min_price: 0.89
+  max_per_market: 100.0
+  poll_interval_seconds: 5
+
 execution:
   polygon_rpc: "${POLYGON_RPC_URL}"
   order_check_interval: 1.0        # Seconds between order status checks
