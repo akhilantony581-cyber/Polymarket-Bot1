@@ -560,8 +560,8 @@ DASHBOARD_HTML = """
     <h3>Open Positions (Filled)</h3>
     <div style="max-height:300px;overflow-y:auto">
       <table style="width:100%">
-        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>Status</th><th>PnL</th><th>Exit</th></tr></thead>
-        <tbody id="positions"><tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>Held</th><th>Status</th><th>PnL</th><th>Exit</th></tr></thead>
+        <tbody id="positions"><tr><td colspan="10" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -774,8 +774,9 @@ function _updateStateInner(s) {
   // Positions
   const posTbody = document.getElementById('positions');
   if (!s.positions || s.positions.length === 0) {
-    posTbody.innerHTML = '<tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr>';
+    posTbody.innerHTML = '<tr><td colspan="10" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr>';
   } else {
+    const fmtAge = s => { if(!s) return '—'; if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m'; };
     posTbody.innerHTML = s.positions.map(p => `
       <tr>
         <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:#1f6feb33;color:#58a6ff">${p.bot||'—'}</span></td>
@@ -784,6 +785,7 @@ function _updateStateInner(s) {
         <td><span class="tag tag-${p.mode}">${p.mode}</span></td>
         <td>${p.entry_price.toFixed(4)}</td>
         <td>$${p.size.toFixed(2)}</td>
+        <td style="color:#8b949e">${fmtAge(p.held_seconds)}</td>
         <td>${p.redeemed ? '<span class="win">Redeemed</span>' : 'Holding'}</td>
         <td class="${p.pnl >= 0 ? 'win' : 'loss'}">${p.pnl !== null ? (p.pnl >= 0 ? '+' : '') + p.pnl.toFixed(4) : '—'}</td>
         <td>${!p.redeemed ? `<button class="btn-exit" onclick="promptExit('${p.order_id}', ${p.entry_price})">Exit</button>` : '—'}</td>
