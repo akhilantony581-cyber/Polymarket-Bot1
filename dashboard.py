@@ -547,8 +547,8 @@ DASHBOARD_HTML = """
     <h3>Active Orders</h3>
     <div style="max-height:300px;overflow-y:auto">
       <table style="width:100%">
-        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Market</th><th>Coin</th><th>Mode</th><th>Price</th><th>Size</th><th>Age</th><th>Action</th></tr></thead>
-        <tbody id="activeOrders"><tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">No active orders</td></tr></tbody>
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Market</th><th>Coin</th><th>Mode</th><th>Price</th><th>Size</th><th>Age</th><th>Action</th></tr></thead>
+        <tbody id="activeOrders"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No active orders</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -560,8 +560,8 @@ DASHBOARD_HTML = """
     <h3>Open Positions (Filled)</h3>
     <div style="max-height:300px;overflow-y:auto">
       <table style="width:100%">
-        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>Status</th><th>PnL</th><th>Exit</th></tr></thead>
-        <tbody id="positions"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Market</th><th>Coin</th><th>Mode</th><th>Entry</th><th>Size</th><th>Status</th><th>PnL</th><th>Exit</th></tr></thead>
+        <tbody id="positions"><tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -756,10 +756,11 @@ function _updateStateInner(s) {
   // Active Orders
   const aoTbody = document.getElementById('activeOrders');
   if (!s.active_orders || s.active_orders.length === 0) {
-    aoTbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e;text-align:center;padding:16px">No active orders</td></tr>';
+    aoTbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No active orders</td></tr>';
   } else {
     aoTbody.innerHTML = s.active_orders.map(o => `
       <tr>
+        <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:#1f6feb33;color:#58a6ff">${o.bot||'—'}</span></td>
         <td style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis">${o.market_id.substring(0,20)}...</td>
         <td>${o.coin}</td>
         <td><span class="tag tag-${o.mode}">${o.mode}</span></td>
@@ -773,10 +774,11 @@ function _updateStateInner(s) {
   // Positions
   const posTbody = document.getElementById('positions');
   if (!s.positions || s.positions.length === 0) {
-    posTbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr>';
+    posTbody.innerHTML = '<tr><td colspan="9" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr>';
   } else {
     posTbody.innerHTML = s.positions.map(p => `
       <tr>
+        <td><span style="font-size:10px;padding:2px 6px;border-radius:3px;background:#1f6feb33;color:#58a6ff">${p.bot||'—'}</span></td>
         <td style="font-size:11px">${p.market_id.substring(0,20)}...</td>
         <td>${p.coin}</td>
         <td><span class="tag tag-${p.mode}">${p.mode}</span></td>
