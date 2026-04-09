@@ -1487,15 +1487,22 @@ async def get_stats():
             "pnl":          r.get("pnl") or r.get("total_pnl") or 0,
         }
     if _tdb:
-        raw = _tdb.get_stats()
-        rows = raw.get("rows", [])
-        rows = rows if isinstance(rows, list) else [rows]
-        return {
-            "summary": _norm_summary(raw.get("summary", {})),
-            "bot1":    _norm_summary(raw.get("bot1", {})),
-            "bot2":    _norm_summary(raw.get("bot2", {})),
-            "rows":    [_norm_row(r) for r in rows],
-        }
+        try:
+            raw = _tdb.get_stats()
+            rows = raw.get("rows", [])
+            rows = rows if isinstance(rows, list) else [rows]
+            # Filter out empty dicts that can appear when q() returns single dict
+            rows = [r for r in rows if r]
+            if rows:
+                return {
+                    "summary": _norm_summary(raw.get("summary", {})),
+                    "bot1":    _norm_summary(raw.get("bot1", {})),
+                    "bot2":    _norm_summary(raw.get("bot2", {})),
+                    "rows":    [_norm_row(r) for r in rows],
+                }
+        except Exception as e:
+            logger.warning(f"get_stats DB query failed, falling back to in-memory: {e}")
+    # Fallback: in-memory WinRateTracker from current session
     bot = get_bot()
     if not bot:
         return {"summary": {}, "bot1": {}, "bot2": {}, "rows": []}

@@ -163,6 +163,7 @@ class StructuredLogger:
                     pnl=pos.pnl, win=win,
                     market_id=pos.market.market_id, order_id=pos.order.order_id,
                 )
+                logger.info(f"trade_db: closed trade written coin={pos.market.coin} win={win} pnl={pos.pnl}")
             except Exception as e:
                 logger.warning(f"trade_db closed write failed: {e}")
 
