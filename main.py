@@ -401,7 +401,10 @@ class TradingBot:
             if not can:
                 break
 
-            kelly_size = self._kelly_size(price, tf_min, tf_max_trade)
+            kelly_size = min(
+                self._kelly_size(price, tf_min, tf_max_trade),
+                tf_max_market - market_exposure,
+            )
             qualifying.append((market, side, price, kelly_size))
 
         if not qualifying:
@@ -463,13 +466,17 @@ class TradingBot:
 
             if self._market_has_active_order(market.market_id):
                 continue
-            if self._market_exposure(market.market_id) >= s2_max_market:
+            s2_exposure = self._market_exposure(market.market_id)
+            if s2_exposure >= s2_max_market:
                 continue
             can, _ = self.risk_manager.can_trade(self.order_manager.active_count + len(s2_qualifying))
             if not can:
                 break
 
-            kelly_size = self._kelly_size(price, s2_min_price, s2_max_trade)
+            kelly_size = min(
+                self._kelly_size(price, s2_min_price, s2_max_trade),
+                s2_max_market - s2_exposure,
+            )
             s2_qualifying.append((market, side, price, kelly_size))
 
         async def _submit_snipe2(market, side, price, size):
