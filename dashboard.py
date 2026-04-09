@@ -617,11 +617,10 @@ function _updateStateInner(s) {
 
   // Config sliders
   if (s.config) {
-    const me = document.getElementById('minEntry');
-    me.value = s.config.min_entry;
-    document.getElementById('minEntryVal').textContent = parseFloat(s.config.min_entry).toFixed(3);
-    document.getElementById('totalCapital').value = s.config.total_capital;
-    if (s.config.max_concurrent) document.getElementById('maxConcurrent').value = s.config.max_concurrent;
+    const _set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    const _txt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    _set('totalCapital', s.config.total_capital);
+    if (s.config.max_concurrent) _set('maxConcurrent', s.config.max_concurrent);
     if (s.config.snipe2 && !document.getElementById('s2MinPrice')._loaded) {
       const s2 = s.config.snipe2;
       document.getElementById('s2Enabled').checked  = s2.enabled !== false;
@@ -1125,7 +1124,10 @@ async def get_state():
     if not bot:
         return {"error": "Bot not running"}
     state = bot.get_state()
-    state["cash_balance"] = await bot.execution.get_usdc_balance()
+    try:
+        state["cash_balance"] = await asyncio.wait_for(bot.execution.get_usdc_balance(), timeout=5.0)
+    except Exception:
+        state["cash_balance"] = None
     state["logs"] = list(_log_buffer)[-100:]  # last 100 lines
     return state
 
