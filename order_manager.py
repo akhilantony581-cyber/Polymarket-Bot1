@@ -33,6 +33,7 @@ class ManagedPosition:
     mode: str
     entry_usdc: float           # USDC spent
     entry_price: float
+    trade_side: str = "yes"     # 'yes' or 'no' — which token was bought
     opened_at: float = field(default_factory=time.time)
     resolved: bool = False
     redeemed: bool = False
@@ -151,12 +152,14 @@ class OrderManager:
         if not order:
             return None
 
+        trade_side, _ = market.best_trade_side
         pos = ManagedPosition(
             order=order,
             market=market,
             mode=mode,
             entry_usdc=usdc_size,
             entry_price=price,
+            trade_side=trade_side,
         )
         self.active_orders[order.order_id] = pos
 
@@ -369,15 +372,29 @@ class OrderManager:
             f"condition={pos.market.condition_id[:16]}..."
         )
 
+        # Determine WIN/LOSS before redeeming.
+        # 1st choice: query Polymarket data API — redeemable = token has value = WIN.
+        # 2nd choice: fall back to side-aware yes_price check.
+        is_win = await self._check_win_via_api(pos)
+        if is_win is None:
+            # Fallback: YES holder wins if yes_price→1.0; NO holder wins if yes_price→0.0
+            if pos.trade_side == "no":
+                is_win = pos.market.yes_price < 0.5
+            else:
+                is_win = pos.market.yes_price >= 0.5
+        logger.info(
+            f"Win determination: side={pos.trade_side} yes_price={pos.market.yes_price:.4f} "
+            f"→ is_win={is_win}"
+        )
+
         success = await self.execution.redeem_position(
             condition_id=pos.market.condition_id,
             amounts=[],  # unused — CTF redeems all held tokens
         )
 
         if success:
-            # Determine WIN/LOSS from final market price (≥0.5 = YES resolved, WIN)
             tokens = max(pos.order.filled_size, pos.order.size)
-            proceeds = tokens * 1.0 if pos.market.yes_price >= 0.5 else 0.0
+            proceeds = tokens * 1.0 if is_win else 0.0
             pos.mark_redeemed(proceeds)
             if self.on_redeem:
                 self.on_redeem(pos)
@@ -386,6 +403,38 @@ class OrderManager:
                 f"Redeem failed for {pos.order.order_id[:16]} "
                 f"— will retry in 60s. Redeem manually on polymarket.com if needed."
             )
+
+    async def _check_win_via_api(self, pos: ManagedPosition) -> Optional[bool]:
+        """
+        Query Polymarket data API to determine if this position is a win.
+        Returns True (win), False (loss), or None (API unavailable / market not yet resolved).
+        """
+        import httpx as _httpx
+        proxy_wallet = os.environ.get("POLYMARKET_PROXY_WALLET", "")
+        if not proxy_wallet or not pos.market.condition_id:
+            return None
+        try:
+            async with _httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://data-api.polymarket.com/positions",
+                    params={"user": proxy_wallet, "redeemable": "true", "limit": 500},
+                )
+            if resp.status_code != 200:
+                return None
+            positions = resp.json() or []
+            redeemable_cids = {
+                p.get("conditionId") or p.get("condition_id", "")
+                for p in positions
+            }
+            if pos.market.condition_id in redeemable_cids:
+                return True  # confirmed WIN — tokens are redeemable
+            # If market is fully expired and condition_id NOT in redeemable list → LOSS
+            if pos.market.is_expired:
+                return False
+            return None  # market still live — can't determine yet
+        except Exception as e:
+            logger.debug(f"_check_win_via_api error: {e}")
+            return None
 
     # ------------------------------------------------------------------
     # MANUAL EXIT (dashboard/Telegram command)

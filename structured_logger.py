@@ -115,6 +115,7 @@ class StructuredLogger:
         return "bot2" if getattr(pos.market, "timeframe", "") == "1h" else "bot1"
 
     def log_trade_open(self, pos: Any):
+        trade_side = getattr(pos, "trade_side", "yes")
         self._write(self._trade_path, {
             "event": "open",
             "order_id": pos.order.order_id,
@@ -122,6 +123,7 @@ class StructuredLogger:
             "coin": pos.market.coin,
             "timeframe": pos.market.timeframe,
             "mode": pos.mode,
+            "side": trade_side,
             "entry_price": pos.entry_price,
             "entry_usdc": pos.entry_usdc,
             "timestamp": time.time(),
@@ -131,6 +133,7 @@ class StructuredLogger:
                 _tdb.log_trade(
                     bot=self._bot(pos), coin=pos.market.coin,
                     timeframe=pos.market.timeframe, mode=pos.mode,
+                    side=trade_side,
                     entry_price=pos.entry_price, entry_usdc=pos.entry_usdc,
                     market_id=pos.market.market_id, order_id=pos.order.order_id,
                 )
