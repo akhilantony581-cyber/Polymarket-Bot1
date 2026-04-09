@@ -1018,9 +1018,11 @@ setInterval(() => fetch('/ping').catch(()=>{}), 5 * 60 * 1000);
 loadStats();
 loadTxLog();
 loadBotSummary();
+refreshLivePositions();
 setInterval(loadStats, 15000);
 setInterval(loadTxLog, 120000);
 setInterval(loadBotSummary, 30000);
+setInterval(refreshLivePositions, 30000);
 
 // Transaction Log
 async function loadTxLog() {
