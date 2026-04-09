@@ -118,6 +118,11 @@ class Bot3Update(BaseModel):
     poll_interval: int = 5
 
 
+class GlobalSafetyUpdate(BaseModel):
+    min_price: float
+    max_per_market: float
+
+
 class TradeUpdate(BaseModel):
     kelly_score_95: float
     kelly_score_90: float
@@ -287,6 +292,35 @@ DASHBOARD_HTML = """
 </div>
 
 <hr class="divider">
+
+<!-- Global Safety -->
+<div class="section-pad">
+  <div class="card" style="border-color:#f85149;background:#1a0a0a">
+    <h3 style="color:#f85149">⚠ Global Safety Limits
+      <span style="color:#8b949e;font-size:10px;font-weight:normal;margin-left:8px;text-transform:none">Applies to ALL bots — hard backstop at execution layer</span>
+    </h3>
+    <div style="display:flex;gap:32px;align-items:flex-end;flex-wrap:wrap">
+      <div>
+        <div style="color:#8b949e;font-size:11px;margin-bottom:4px">Min Price (floor)</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="number" id="globalMinPrice" min="0.50" max="0.999" step="0.001" value="0.89" style="width:90px">
+          <span style="color:#8b949e;font-size:11px">Current: <b id="globalMinPriceCur" style="color:#e6edf3">—</b></span>
+        </div>
+      </div>
+      <div>
+        <div style="color:#8b949e;font-size:11px;margin-bottom:4px">Max Per Market ($)</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="number" id="globalMaxPerMarket" min="1" max="1000" step="1" value="100" style="width:90px">
+          <span style="color:#8b949e;font-size:11px">Current: <b id="globalMaxPerMarketCur" style="color:#e6edf3">—</b></span>
+        </div>
+      </div>
+      <div>
+        <button onclick="saveGlobalSafety()" style="background:#f85149;color:#fff;padding:6px 18px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:bold">Save</button>
+        <span id="globalSafetyMsg" style="margin-left:10px;font-size:12px;color:#3fb950"></span>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Bot Performance Summary -->
 <div class="section-pad">
@@ -557,13 +591,11 @@ DASHBOARD_HTML = """
 <!-- Open Positions -->
 <div class="section-pad">
   <div class="card">
-    <h3>Open Positions (Filled)
-      <button onclick="refreshLivePositions()" style="float:right;background:#238636;color:#fff;padding:4px 14px;border:none;border-radius:4px;cursor:pointer;font-size:11px">↻ Refresh from Polymarket</button>
-    </h3>
+    <h3>Open Positions (Filled)</h3>
     <div style="max-height:300px;overflow-y:auto">
       <table style="width:100%">
-        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Market</th><th>Outcome</th><th>Shares</th><th>Cur. Value</th><th>Init. Value</th><th>P&amp;L</th><th>Redeemable</th></tr></thead>
-        <tbody id="positions"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">Click ↻ Refresh to load live positions from Polymarket</td></tr></tbody>
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1"><tr><th>Bot</th><th>Coin</th><th>Mode</th><th>Side</th><th>Entry Price</th><th>Size</th><th>PnL</th><th>Status</th></tr></thead>
+        <tbody id="positions"><tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -773,6 +805,47 @@ function _updateStateInner(s) {
       </tr>`).join('');
   }
 
+  // Open Positions (in-memory filled_positions)
+  const posTbody = document.getElementById('positions');
+  if (!s.positions || s.positions.length === 0) {
+    posTbody.innerHTML = '<tr><td colspan="8" style="color:#8b949e;text-align:center;padding:16px">No open positions</td></tr>';
+  } else {
+    posTbody.innerHTML = s.positions.map(p => {
+      const botLabel = p.bot || '—';
+      const botColor = botLabel === 'Bot1' ? '#58a6ff' : botLabel === 'Bot2' ? '#bc8cff' : botLabel === 'Bot3' ? '#3fb950' : '#8b949e';
+      const botBadge = botLabel !== '—'
+        ? `<span style="background:${botColor}22;color:${botColor};padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600">${botLabel}</span>`
+        : '—';
+      const pnl = p.pnl;
+      const side = p.trade_side || 'yes';
+      const sideColor = side === 'no' ? '#f85149' : '#3fb950';
+      return `<tr>
+        <td>${botBadge}</td>
+        <td>${p.coin}</td>
+        <td><span class="tag tag-${p.mode}">${p.mode}</span></td>
+        <td style="color:${sideColor}">${side.toUpperCase()}</td>
+        <td>${p.entry_price.toFixed(4)}</td>
+        <td>$${p.size.toFixed(2)}</td>
+        <td class="${pnl != null ? (pnl >= 0 ? 'win' : 'loss') : ''}">${pnl != null ? (pnl >= 0 ? '+' : '') + pnl.toFixed(4) : '—'}</td>
+        <td style="color:#8b949e">${p.redeemed ? '<span class="win">Redeemed</span>' : 'Holding'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Update global safety current values
+  const gs = s.config.global_safety || {};
+  if (gs.min_price != null) {
+    document.getElementById('globalMinPriceCur').textContent = gs.min_price.toFixed(3);
+    if (!document.getElementById('globalMinPrice')._gsLoaded) {
+      document.getElementById('globalMinPrice').value = gs.min_price;
+      document.getElementById('globalMaxPerMarket').value = gs.max_per_market || 100;
+      document.getElementById('globalMinPrice')._gsLoaded = true;
+    }
+  }
+  if (gs.max_per_market != null) {
+    document.getElementById('globalMaxPerMarketCur').textContent = '$' + gs.max_per_market;
+  }
+
   // Recent Trades
   const rtTbody = document.getElementById('recentTrades');
   if (!s.recent_trades || s.recent_trades.length === 0) {
@@ -878,6 +951,16 @@ function saveBot2() {
     window:     parseInt(document.getElementById('b2Window').value),
   }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
   document.getElementById('b2MinPrice')._loaded = false;
+}
+
+function saveGlobalSafety() {
+  const msg = document.getElementById('globalSafetyMsg');
+  api('/settings/global', {
+    min_price:      parseFloat(document.getElementById('globalMinPrice').value),
+    max_per_market: parseFloat(document.getElementById('globalMaxPerMarket').value),
+  }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); })
+    .catch(e => { msg.textContent = 'Error: ' + e; msg.style.color='#f85149'; });
+  document.getElementById('globalMinPrice')._gsLoaded = false;
 }
 
 function saveBot3() {
@@ -1501,6 +1584,25 @@ async def update_bot3(data: Bot3Update):
         bot.copy_trader.poll_interval  = data.poll_interval
     status = "enabled" if data.enabled else "disabled"
     return {"message": f"Bot 3 updated — {status}, min={data.min_price}, max/market=${data.max_per_market}"}
+
+
+@app.post("/settings/global")
+async def update_global_safety(data: GlobalSafetyUpdate):
+    if data.min_price < 0.50:
+        raise HTTPException(400, "Global min_price cannot be below 0.50")
+    if data.max_per_market < 1:
+        raise HTTPException(400, "Global max_per_market must be at least $1")
+    config = load_config()
+    config.setdefault("global_safety", {}).update({
+        "min_price":    round(data.min_price, 3),
+        "max_per_market": data.max_per_market,
+    })
+    save_config(config)
+    bot = get_bot()
+    if bot:
+        bot.config.setdefault("global_safety", {}).update(config["global_safety"])
+        bot.execution.config["global_safety"] = config["global_safety"]
+    return {"message": f"Global safety updated — min_price={data.min_price}, max_per_market=${data.max_per_market}"}
 
 
 @app.post("/settings/trade")

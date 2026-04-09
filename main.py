@@ -821,6 +821,7 @@ class TradingBot:
                     "bot": "Bot3" if p.mode == "copy" else ("Bot2" if getattr(p.market, "timeframe", "") == "1h" else "Bot1"),
                     "entry_price": p.entry_price,
                     "size": p.entry_usdc,
+                    "trade_side": getattr(p, "trade_side", "yes"),
                     "redeemed": p.redeemed,
                     "pnl": p.pnl,
                 }
@@ -840,6 +841,7 @@ class TradingBot:
                 "snipe2": self.config.get("snipe2", {}),
                 "snipe_1h": self.config.get("snipe_1h", {}),
                 "copy_trader": self.config.get("copy_trader", {}),
+                "global_safety": self.config.get("global_safety", {"min_price": 0.89, "max_per_market": 100.0}),
                 "markets_1h_count": sum(
                     1 for m in self.poly_listener.markets.values()
                     if getattr(m, "timeframe", "") == "1h" and not m.is_expired

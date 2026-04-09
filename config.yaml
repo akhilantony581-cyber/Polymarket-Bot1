@@ -2,6 +2,13 @@
 # Polymarket Trading Bot — Configuration
 # ============================================================
 
+# --- Global Safety (hard backstop — applies to ALL bots) ---
+# If any bot malfunctions and tries to place an order below this price
+# or above this per-market exposure, the execution engine will reject it.
+global_safety:
+  min_price: 0.89
+  max_per_market: 100.0
+
 # --- Capital & Risk ---
 capital:
   total: 150.0
