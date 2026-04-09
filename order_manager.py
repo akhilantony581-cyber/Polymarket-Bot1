@@ -347,10 +347,26 @@ class OrderManager:
                         if match:
                             await self._attempt_redeem(match)
                         else:
-                            # Untracked position (previous session) — redeem only
-                            success = await self.execution.redeem_position(cid, [])
-                            if success:
-                                logger.info(f"Redeemed untracked position cid={cid[:16]}")
+                            # Untracked position (previous session) — redeem and update DB
+                            proceeds = await self.execution.redeem_position(cid, [])
+                            if proceeds is not None:
+                                logger.info(
+                                    f"Redeemed untracked position cid={cid[:16]} "
+                                    f"proceeds={proceeds:.4f}"
+                                )
+                                try:
+                                    import trade_db as _tdb
+                                    win = 1 if proceeds > 0 else 0
+                                    # Estimate pnl from API data if available
+                                    init_val = float(
+                                        p.get("initialValue") or
+                                        p.get("investedAmount") or
+                                        p.get("initValue") or 0
+                                    )
+                                    pnl = round(proceeds - init_val, 6) if init_val > 0 else None
+                                    _tdb.mark_resolved_by_market(cid, win, pnl)
+                                except Exception as _e:
+                                    logger.debug(f"DB update for untracked position failed: {_e}")
                         await asyncio.sleep(3)
                 except Exception as e:
                     logger.debug(f"Auto-redeem sweep error: {e}")

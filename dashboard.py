@@ -860,7 +860,7 @@ function _updateStateInner(s) {
         <td>${t.entry_price.toFixed(4)}</td>
         <td>$${t.entry_usdc.toFixed(2)}</td>
         <td class="${t.pnl >= 0 ? 'win' : 'loss'}">${t.pnl !== null ? (t.pnl >= 0 ? '+' : '') + t.pnl.toFixed(4) : '—'}</td>
-        <td class="${t.win ? 'win' : 'loss'}">${t.win ? '✓ WIN' : '✗ LOSS'}</td>
+        <td class="${t.win!=null?(t.win?'win':'loss'):''}">${t.win!=null?(t.win?'✓ WIN':'✗ LOSS'):'<span style="color:#8b949e">⏳</span>'}</td>
       </tr>`).join('');
   }
 }
@@ -1082,11 +1082,9 @@ setInterval(() => fetch('/ping').catch(()=>{}), 5 * 60 * 1000);
 loadStats();
 loadTxLog();
 loadBotSummary();
-refreshLivePositions();
 setInterval(loadStats, 15000);
 setInterval(loadTxLog, 120000);
 setInterval(loadBotSummary, 30000);
-setInterval(refreshLivePositions, 30000);
 
 // Transaction Log
 async function loadTxLog() {
@@ -1111,18 +1109,21 @@ async function loadTxLog() {
       <td>${t.entry_price!=null?t.entry_price.toFixed(4):'—'}</td>
       <td>$${t.entry_usdc!=null?t.entry_usdc.toFixed(2):'—'}</td>
       <td class="${pnl>=0?'win':'loss'}">${pnl!=null?(pnl>=0?'+':'')+pnl.toFixed(4):'—'}</td>
-      <td class="${win?'win':'loss'}">${win?'✓ WIN':'✗ LOSS'}</td>
+      <td class="${win!=null?(win?'win':'loss'):''}">${win!=null?(win?'✓ WIN':'✗ LOSS'):'<span style="color:#8b949e">⏳ Pending</span>'}</td>
     </tr>`;
   }).join('');
-  // Stats
-  const wins = trades.filter(t=>t.win).length;
-  const losses = trades.filter(t=>!t.win && t.pnl!=null).length;
+  // Stats — only count resolved trades (win IS NOT NULL)
+  const wins = trades.filter(t => t.win === 1 || t.win === true).length;
+  const losses = trades.filter(t => t.win != null && !t.win).length;
+  const pending = trades.filter(t => t.win == null).length;
+  const resolved = wins + losses;
   const totalPnl = trades.reduce((s,t)=>s+(t.pnl||0),0);
-  const wr = trades.length ? Math.round(wins/trades.length*100) : 0;
+  const wr = resolved ? Math.round(wins/resolved*100) : 0;
   document.getElementById('txStats').innerHTML = `
     <span>Total: <b>${trades.length}</b></span>
     <span class="win">Wins: <b>${wins}</b></span>
     <span class="loss">Losses: <b>${losses}</b></span>
+    ${pending ? `<span style="color:#8b949e">Pending: <b>${pending}</b></span>` : ''}
     <span>Win Rate: <b>${wr}%</b></span>
     <span class="${totalPnl>=0?'win':'loss'}">Total PnL: <b>${totalPnl>=0?'+':''}$${totalPnl.toFixed(4)}</b></span>
   `;

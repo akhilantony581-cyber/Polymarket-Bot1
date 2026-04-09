@@ -147,6 +147,49 @@ def clear_all_trades():
 
 # ── Write ─────────────────────────────────────────────────────────────────────
 
+def mark_resolved_by_market(market_id: str, win: int, pnl: Optional[float] = None):
+    """
+    Update win/pnl for all unresolved (win IS NULL) trades whose market_id
+    matches the given value. Called after redeeming untracked positions from
+    a previous session where we have no in-memory ManagedPosition.
+    In Polymarket, market_id often equals conditionId, so we pass conditionId here.
+    """
+    ph = "%s" if _USE_PG else "?"
+    if _USE_PG:
+        conn = _pg()
+        try:
+            with conn.cursor() as cur:
+                if pnl is not None:
+                    cur.execute(
+                        f"UPDATE trades SET win={ph}, pnl={ph} WHERE market_id={ph} AND win IS NULL",
+                        (win, round(pnl, 6), market_id),
+                    )
+                else:
+                    cur.execute(
+                        f"UPDATE trades SET win={ph} WHERE market_id={ph} AND win IS NULL",
+                        (win, market_id),
+                    )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.warning(f"mark_resolved_by_market error: {e}")
+        finally:
+            _pg_release(conn)
+    else:
+        with _sqlite() as c:
+            if pnl is not None:
+                c.execute(
+                    "UPDATE trades SET win=?, pnl=? WHERE market_id=? AND win IS NULL",
+                    (win, round(pnl, 6), market_id),
+                )
+            else:
+                c.execute(
+                    "UPDATE trades SET win=? WHERE market_id=? AND win IS NULL",
+                    (win, market_id),
+                )
+    logger.debug(f"mark_resolved_by_market: market_id={market_id[:16]} win={win} pnl={pnl}")
+
+
 def log_trade(*, bot, coin, timeframe, mode, side="yes", entry_price,
               entry_usdc, pnl=None, win=None, market_id="", order_id=""):
     win_int = int(win) if win is not None else None
