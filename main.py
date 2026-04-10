@@ -989,6 +989,7 @@ class TradingBot:
                 "max_per_trade": self.config["capital"].get("max_per_trade", 10.0),
                 "max_per_market": self.config["capital"].get("max_per_market", 20.0),
                 "snipe2": self.config.get("snipe2", {}),
+                "snipe3": self.config.get("snipe3", {}),
                 "snipe_1h": self.config.get("snipe_1h", {}),
                 "copy_trader": self.config.get("copy_trader", {}),
                 "global_safety": self.config.get("global_safety", {"min_price": 0.89, "max_per_market": 100.0}),
@@ -1002,7 +1003,7 @@ class TradingBot:
 
     def _get_prices(self) -> dict:
         result = {}
-        for coin in ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]:
+        for coin in self.config.get("markets", {}).get("coins", ["BTC", "ETH", "SOL", "XRP"]):
             bd = self.binance.get(coin)
             # Find Polymarket Up market for this coin (any timeframe)
             up_market = next(

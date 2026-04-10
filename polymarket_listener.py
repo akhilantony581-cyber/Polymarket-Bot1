@@ -229,9 +229,16 @@ class PolymarketListener:
         errors = 0
 
         # Only fetch slug-based timeframes (not 1h — those use tag API)
-        slug_timeframes = {k: v for k, v in self.TIMEFRAME_SECONDS.items() if k != "1h"}
+        # Also filter to configured timeframes only
+        configured_tfs  = set(self.config.get("markets", {}).get("timeframes", list(self.TIMEFRAME_SECONDS.keys())))
+        configured_coins = set(self.config.get("markets", {}).get("coins", list(self.COIN_SLUGS.keys())))
+        slug_timeframes = {k: v for k, v in self.TIMEFRAME_SECONDS.items()
+                           if k != "1h" and k in configured_tfs}
 
-        for coin, slug_prefix in self.COIN_SLUGS.items():
+        for coin in configured_coins:
+            if coin not in self.COIN_SLUGS:
+                continue
+            slug_prefix = self.COIN_SLUGS[coin]
             for tf, tf_sec in slug_timeframes.items():
                 current_epoch = self._current_epoch(tf_sec)
                 # Fetch current window and next window (in case current just closed)

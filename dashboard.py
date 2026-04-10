@@ -401,6 +401,39 @@ DASHBOARD_HTML = """
     <div id="snipe2Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
   </div>
 </div>
+
+<div class="grid-2" style="padding-top:0;margin-top:12px">
+  <div class="card">
+    <h3>Bot 1 — Snipe 3 (5m contrarian ≤ $0.02)</h3>
+    <p style="color:#8b949e;font-size:11px;margin:0 0 8px">Buys the losing side (YES or NO) at ≤ max price — contrarian reversal bet on 5m markets.</p>
+    <div class="control-row">
+      <label>Enabled</label>
+      <input type="checkbox" id="s3Enabled" checked style="width:auto">
+    </div>
+    <div class="control-row">
+      <label>Max Entry Price</label>
+      <input type="number" id="s3MaxPrice" min="0.001" max="0.05" step="0.001" value="0.02">
+    </div>
+    <div class="control-row">
+      <label>Max Per Trade ($)</label>
+      <input type="number" id="s3PerTrade" min="0.5" max="10" step="0.5" value="1">
+    </div>
+    <div class="control-row">
+      <label>Max Per Market ($)</label>
+      <input type="number" id="s3PerMarket" min="1" max="20" step="0.5" value="2">
+    </div>
+    <div class="control-row">
+      <label>Window (seconds)</label>
+      <input type="number" id="s3Window" min="30" max="300" step="10" value="180">
+    </div>
+    <div class="control-row">
+      <label>Strike Buffer</label>
+      <input type="number" id="s3StrikeBuffer" min="0.001" max="0.05" step="0.001" value="0.003">
+    </div>
+    <button class="btn-save" onclick="saveSnipe3()" style="margin-top:8px">💾 Save Snipe 3</button>
+    <div id="snipe3Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+  </div>
+</div>
 </div>
 
 <!-- BOT 2: 1h Market Settings -->
@@ -745,6 +778,16 @@ function _updateStateInner(s) {
       document.getElementById('s2Window').value     = s2.window_seconds || 10;
       document.getElementById('s2MinPrice')._loaded = true;
     }
+    if (s.config.snipe3 && !document.getElementById('s3MaxPrice')._loaded) {
+      const s3 = s.config.snipe3;
+      document.getElementById('s3Enabled').checked      = s3.enabled !== false;
+      document.getElementById('s3MaxPrice').value       = s3.max_entry_price  || 0.02;
+      document.getElementById('s3PerTrade').value       = s3.max_per_trade    || 1;
+      document.getElementById('s3PerMarket').value      = s3.max_per_market   || 2;
+      document.getElementById('s3Window').value         = s3.window_seconds   || 180;
+      document.getElementById('s3StrikeBuffer').value   = s3.strike_buffer    || 0.003;
+      document.getElementById('s3MaxPrice')._loaded = true;
+    }
     // Bot 1 (15m sniper) fields
     if (!document.getElementById('b1SniperMin')._loaded) {
       document.getElementById('b1SniperMin').value  = s.config.sniper_min || 0.97;
@@ -1009,6 +1052,17 @@ function saveSnipe2() {
     per_market: parseFloat(document.getElementById('s2PerMarket').value),
     window:     parseInt(document.getElementById('s2Window').value),
   });
+}
+
+function saveSnipe3() {
+  api('/settings/snipe3', {
+    enabled:       document.getElementById('s3Enabled').checked,
+    max_price:     parseFloat(document.getElementById('s3MaxPrice').value),
+    per_trade:     parseFloat(document.getElementById('s3PerTrade').value),
+    per_market:    parseFloat(document.getElementById('s3PerMarket').value),
+    window:        parseInt(document.getElementById('s3Window').value),
+    strike_buffer: parseFloat(document.getElementById('s3StrikeBuffer').value),
+  }, 'snipe3Msg');
 }
 
 function saveKelly() {
@@ -1772,6 +1826,33 @@ async def update_snipe2(data: Snipe2Update):
     if bot:
         bot.config["snipe2"] = config["snipe2"]
     return {"message": f"Snipe 2 updated — {'enabled' if data.enabled else 'disabled'}, min={data.min_price}, ${data.per_trade}/trade"}
+
+
+class Snipe3Update(BaseModel):
+    enabled: bool = True
+    max_price: float = 0.02
+    per_trade: float = 1.0
+    per_market: float = 2.0
+    window: int = 180
+    strike_buffer: float = 0.003
+
+
+@app.post("/settings/snipe3")
+async def update_snipe3(data: Snipe3Update):
+    config = load_config()
+    config["snipe3"] = {
+        "enabled":          data.enabled,
+        "max_entry_price":  round(data.max_price, 3),
+        "max_per_trade":    data.per_trade,
+        "max_per_market":   data.per_market,
+        "window_seconds":   data.window,
+        "strike_buffer":    round(data.strike_buffer, 3),
+    }
+    save_config(config)
+    bot = get_bot()
+    if bot:
+        bot.config["snipe3"] = config["snipe3"]
+    return {"message": f"Snipe 3 updated — {'enabled' if data.enabled else 'disabled'}, max_price={data.max_price}, ${data.per_trade}/trade"}
 
 
 class ManualRedeemRequest(BaseModel):
