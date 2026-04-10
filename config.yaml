@@ -64,16 +64,13 @@ order_book:
 
 # --- Markets ---
 markets:
-  coins: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
+  coins: ["BTC", "ETH", "SOL", "XRP"]
   timeframes: ["5m", "15m", "1h"]
   binance_symbols:
     BTC: "BTCUSDT"
     ETH: "ETHUSDT"
     SOL: "SOLUSDT"
     XRP: "XRPUSDT"
-    DOGE: "DOGEUSDT"
-    BNB: "BNBUSDT"
-    HYPE: "HYPEUSDT"
 
 # --- Market Maker Both-Sides ---
 # Places GTC limit buy orders on both winning and losing sides when
