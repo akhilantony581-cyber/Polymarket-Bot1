@@ -569,6 +569,90 @@ class TradingBot:
         if s2_qualifying:
             await asyncio.gather(*[_submit_snipe2(m, s, p, sz) for m, s, p, sz in s2_qualifying])
 
+        # ── Snipe 3: contrarian bet — buy losing side at ≤ $0.02 in 5m markets ──
+        s3 = self.config.get("snipe3", {})
+        if not s3.get("enabled", True):
+            return
+        s3_max_price  = s3.get("max_entry_price", 0.02)
+        s3_max_trade  = s3.get("max_per_trade", 1.0)
+        s3_max_market = s3.get("max_per_market", 2.0)
+        s3_window     = s3.get("window_seconds", 180)
+        s3_buffer     = s3.get("strike_buffer", 0.003)
+
+        s3_qualifying = []
+        for market in list(self.poly_listener.markets.values()):
+            if market.timeframe != "5m":
+                continue
+            if market.is_expired:
+                continue
+            if market.seconds_to_expiry > s3_window:
+                continue
+
+            # Determine the cheap/losing side
+            yes_price = market.yes_price
+            no_price  = round(1.0 - yes_price, 4)
+
+            if yes_price <= s3_max_price and yes_price > 0:
+                contra_side  = "yes"
+                contra_price = yes_price
+                contra_token = market.yes_token_id
+            elif no_price <= s3_max_price and no_price > 0:
+                contra_side  = "no"
+                contra_price = no_price
+                contra_token = market.no_token_id
+            else:
+                continue  # neither side cheap enough
+
+            # Fixed-strike markets: Binance must be within strike_buffer of strike
+            # (if price is far from strike reversal is very unlikely)
+            if market.strike > 0:
+                bd = self.binance.get(market.coin)
+                if bd and self.binance.is_ready(market.coin):
+                    distance = abs(bd.price - market.strike) / market.strike
+                    if distance > s3_buffer:
+                        logger.debug(
+                            f"S3 strike skip {market.coin} distance={distance:.4f} > {s3_buffer}"
+                        )
+                        continue
+
+            # Volatility gate still applies — no point betting in ultra-chaotic markets
+            if vg_enabled:
+                bd = self.binance.get(market.coin)
+                if bd and self.binance.is_ready(market.coin) and bd.price > 0:
+                    vol = bd.volatility(vg_window)
+                    if vol is not None and vol / bd.price * 100 > vg_max_vol:
+                        logger.debug(f"S3 vol gate SKIP {market.coin}")
+                        continue
+
+            market_exp = self._market_exposure(market.market_id)
+            if market_exp >= s3_max_market:
+                continue
+
+            can, _ = self.risk_manager.can_trade(self.order_manager.active_count + len(s3_qualifying))
+            if not can:
+                break
+
+            size = min(s3_max_trade, s3_max_market - market_exp)
+            if size < 0.50:
+                continue
+
+            s3_qualifying.append((market, contra_side, contra_price, contra_token, size))
+
+        async def _submit_snipe3(market, side, price, token_id, size):
+            logger.info(
+                f"SNIPE3 [{market.coin} {market.timeframe}] CONTRA "
+                f"{side.upper()}@{price:.4f} size=${size:.2f} tte={market.seconds_to_expiry:.0f}s"
+            )
+            pos = await self.order_manager.submit(
+                market=market, price=price, usdc_size=size, mode="snipe3",
+                token_id=token_id, side=side,
+            )
+            if pos:
+                self.risk_manager.record_trade_open(pos)
+
+        if s3_qualifying:
+            await asyncio.gather(*[_submit_snipe3(m, s, p, t, sz) for m, s, p, t, sz in s3_qualifying])
+
     # ------------------------------------------------------------------
     # MARKET MAKER — both sides, 10 contracts, price 0.90–0.97
     # ------------------------------------------------------------------

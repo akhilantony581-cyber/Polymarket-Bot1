@@ -65,7 +65,7 @@ order_book:
 # --- Markets ---
 markets:
   coins: ["BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "HYPE"]
-  timeframes: ["15m", "1h"]
+  timeframes: ["5m", "15m", "1h"]
   binance_symbols:
     BTC: "BTCUSDT"
     ETH: "ETHUSDT"
@@ -108,6 +108,19 @@ snipe2:
   max_per_trade: 30.0
   max_per_market: 30.0
   window_seconds: 10
+
+# --- Snipe 3 — Contrarian bet on 5m markets (buy losing side at ≤ $0.02) ---
+# Buys the cheap/losing side (YES or NO) when it is priced at or below max_entry_price.
+# For fixed-strike markets: only fires when Binance price is within strike_buffer of
+# the strike (reversal is plausible). For Up/Down markets: fires on price alone.
+snipe3:
+  enabled: true
+  max_entry_price: 0.02     # buy whichever side costs ≤ 2 cents
+  max_per_trade: 1.0
+  max_per_market: 2.0
+  window_seconds: 180       # last 3 minutes of the 5m market
+  strike_buffer: 0.003      # fixed-strike only: Binance must be within 0.3% of strike
+  order_timeout_seconds: 30
 
 # --- 1h Sniper (separate settings from 5m/15m) ---
 snipe_1h:

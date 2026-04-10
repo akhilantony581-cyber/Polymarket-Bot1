@@ -129,21 +129,25 @@ class OrderManager:
         price: float,
         usdc_size: float,
         mode: str,
+        token_id: str = None,   # override for contrarian/snipe3 (buy losing side)
+        side: str = None,       # override trade_side label ("yes" or "no")
     ) -> Optional[ManagedPosition]:
+
+        effective_token = token_id or market.trade_token_id
 
         if mode == "snipe2":
             # FOK (Fill or Kill) = market order: fills at best ask or cancels instantly.
             # Pass price as min_price so engine verifies the real token price hasn't
             # dropped below the threshold between the scan check and submission.
             order = await self.execution.place_market_order(
-                token_id=market.trade_token_id,
+                token_id=effective_token,
                 market_id=market.market_id,
                 size=usdc_size,
                 min_price=price,
             )
         else:
             order = await self.execution.place_limit_order(
-                token_id=market.trade_token_id,
+                token_id=effective_token,
                 market_id=market.market_id,
                 price=price,
                 size=usdc_size,
@@ -152,7 +156,7 @@ class OrderManager:
         if not order:
             return None
 
-        trade_side, _ = market.best_trade_side
+        trade_side = side or market.best_trade_side[0]
         pos = ManagedPosition(
             order=order,
             market=market,
