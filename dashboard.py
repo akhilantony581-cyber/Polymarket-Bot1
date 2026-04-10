@@ -111,11 +111,13 @@ class Snipe1hUpdate(BaseModel):
     window: int = 1500
 
 
-class Bot3Update(BaseModel):
+class ArbBotUpdate(BaseModel):
     enabled: bool = True
-    min_price: float = 0.89
-    max_per_market: float = 100.0
-    poll_interval: int = 5
+    arb_threshold: float = 0.97
+    size_usdc: float = 50.0
+    max_concurrent_arbs: int = 4
+    min_tte_seconds: int = 300
+    fill_timeout_seconds: int = 60
 
 
 class GlobalSafetyUpdate(BaseModel):
@@ -342,7 +344,7 @@ DASHBOARD_HTML = """
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchBot('bot1')">🤖 Bot 1 — 15m Sniper</button>
   <button class="tab-btn" onclick="switchBot('bot2')">⏱ Bot 2 — 1h Market</button>
-  <button class="tab-btn" onclick="switchBot('bot3')">📋 Bot 3 — Copy Trader</button>
+  <button class="tab-btn" onclick="switchBot('bot3')">💎 Bot 3 — Arb Maker</button>
 </div>
 
 <!-- BOT 1: 15m Sniper Settings -->
@@ -481,46 +483,126 @@ DASHBOARD_HTML = """
 </div>
 </div>
 
-<!-- BOT 3: Copy Trader Settings -->
+<!-- BOT 3: Locked Arbitrage Market Maker -->
 <div id="bot3Panel" class="tab-panel">
-<div class="grid-2" style="padding-top:0">
+
+<!-- Arb Stats Row -->
+<div class="grid" style="padding-top:0">
   <div class="card">
-    <h3>Bot 3 — Copy Trader Settings</h3>
-    <div class="control-row">
-      <label>Min Price</label>
-      <input type="number" id="b3MinPrice" min="0.50" max="0.999" step="0.001" value="0.89">
-    </div>
-    <div class="control-row">
-      <label>Max Per Market ($)</label>
-      <input type="number" id="b3MaxPerMarket" min="5" max="500" step="5" value="100">
-    </div>
-    <div class="control-row">
-      <label>Poll Interval (s)</label>
-      <input type="number" id="b3PollInterval" min="2" max="60" step="1" value="5">
-    </div>
+    <h3>Locked Profit (All Time)</h3>
+    <div class="metric-value positive" id="b3TotalProfit">$0.0000</div>
+    <div class="metric-sub" id="b3TotalComplete">0 arbs completed</div>
+  </div>
+  <div class="card">
+    <h3>Capital Deployed</h3>
+    <div class="metric-value" id="b3TotalCost">$0.00</div>
+    <div class="metric-sub" id="b3ActiveArbsCount">0 arbs in-flight</div>
+  </div>
+  <div class="card">
+    <h3>Opportunities Seen</h3>
+    <div class="metric-value" id="b3OpsSeen">0</div>
+    <div class="metric-sub" id="b3ScanCount">0 scans</div>
+  </div>
+</div>
+
+<div class="grid-2" style="padding-top:0">
+  <!-- Settings -->
+  <div class="card">
+    <h3>Bot 3 — Arb Maker Settings</h3>
+    <p style="color:#8b949e;font-size:11px;margin:0 0 10px">Buys YES+NO simultaneously when combined ask ≤ threshold. Profit locked regardless of direction.</p>
     <div class="control-row">
       <label>Enabled</label>
-      <select id="b3Enabled" style="background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:6px 10px;border-radius:4px">
-        <option value="true">Yes</option>
-        <option value="false">No</option>
-      </select>
+      <input type="checkbox" id="b3Enabled" checked style="width:auto">
+    </div>
+    <div class="control-row">
+      <label>Arb Threshold</label>
+      <input type="number" id="b3Threshold" min="0.90" max="0.98" step="0.001" value="0.97">
+      <span style="color:#8b949e;font-size:10px">YES+NO must be ≤ this</span>
+    </div>
+    <div class="control-row">
+      <label>Size per Arb ($)</label>
+      <input type="number" id="b3SizeUsdc" min="10" max="500" step="10" value="50">
+      <span style="color:#8b949e;font-size:10px">total USDC (split as equal contracts)</span>
+    </div>
+    <div class="control-row">
+      <label>Max Concurrent Arbs</label>
+      <input type="number" id="b3MaxConcurrent" min="1" max="20" step="1" value="4">
+    </div>
+    <div class="control-row">
+      <label>Min TTE (seconds)</label>
+      <input type="number" id="b3MinTte" min="60" max="3600" step="60" value="300">
+      <span style="color:#8b949e;font-size:10px">skip markets with less than this</span>
+    </div>
+    <div class="control-row">
+      <label>Fill Timeout (s)</label>
+      <input type="number" id="b3FillTimeout" min="10" max="300" step="10" value="60">
     </div>
     <button class="btn-save" onclick="saveBot3()" style="margin-top:8px">💾 Save Bot 3</button>
     <div id="bot3Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
   </div>
+
+  <!-- Current Status -->
   <div class="card">
-    <h3>Bot 3 — Current Status</h3>
+    <h3>Bot 3 — Live Status</h3>
     <table>
       <tbody>
         <tr><td style="color:#8b949e">Status</td><td id="b3Status">—</td></tr>
-        <tr><td style="color:#8b949e">Target Wallet</td><td id="b3Wallet" style="font-size:10px;font-family:monospace;word-break:break-all">—</td></tr>
-        <tr><td style="color:#8b949e">Min Price</td><td id="b3CurMinPrice">—</td></tr>
-        <tr><td style="color:#8b949e">Max Per Market</td><td id="b3CurPerMarket">—</td></tr>
-        <tr><td style="color:#8b949e">Poll Interval</td><td id="b3CurPollInterval">—</td></tr>
+        <tr><td style="color:#8b949e">Threshold</td><td id="b3CurThreshold">—</td></tr>
+        <tr><td style="color:#8b949e">Size/Arb</td><td id="b3CurSize">—</td></tr>
+        <tr><td style="color:#8b949e">Max Concurrent</td><td id="b3CurMaxConc">—</td></tr>
+        <tr><td style="color:#8b949e">Complete Arbs</td><td id="b3CurComplete">—</td></tr>
+        <tr><td style="color:#8b949e">Cancelled/Partial</td><td id="b3CurCancelled">—</td></tr>
+        <tr><td style="color:#8b949e">Last Scan</td><td id="b3LastScan">—</td></tr>
       </tbody>
     </table>
+    <div style="margin-top:12px;padding:8px;background:#0d1117;border:1px solid #30363d;border-radius:4px;font-size:11px;color:#8b949e">
+      <b style="color:#3fb950">How it works:</b><br>
+      Scans 1h crypto markets every second. When YES_ask + NO_ask ≤ threshold, buys equal contracts on both sides simultaneously via GTC limit orders.<br><br>
+      <b>Guaranteed profit</b> = contracts × (0.98 − YES_ask − NO_ask)<br>
+      regardless of whether YES or NO resolves.
+    </div>
   </div>
 </div>
+
+<!-- Active Arbs Table -->
+<div class="section-pad" style="padding-top:0">
+  <div class="card">
+    <h3>Active Arb Positions</h3>
+    <div style="max-height:250px;overflow-y:auto">
+      <table style="width:100%">
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1">
+          <tr><th>ID</th><th>Coin</th><th>YES Ask</th><th>NO Ask</th><th>Combined</th><th>Contracts</th><th>Cost</th><th>Locked $</th><th>Status</th><th>Age</th></tr>
+        </thead>
+        <tbody id="b3ActiveArbs"><tr><td colspan="10" style="color:#8b949e;text-align:center;padding:16px">No active arbs</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Completed Arbs -->
+<div class="section-pad" style="padding-top:0">
+  <div class="card">
+    <h3>Recent Completed Arbs</h3>
+    <div style="max-height:250px;overflow-y:auto">
+      <table style="width:100%">
+        <thead style="position:sticky;top:0;background:#161b22;z-index:1">
+          <tr><th>ID</th><th>Coin</th><th>Combined</th><th>Cost</th><th>Locked Profit</th><th>Status</th></tr>
+        </thead>
+        <tbody id="b3RecentArbs"><tr><td colspan="6" style="color:#8b949e;text-align:center;padding:16px">No completed arbs yet</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Paused Bots Notice -->
+<div class="section-pad" style="padding-top:0">
+  <div class="card" style="border-color:#e3b341;background:#1a1500">
+    <h3 style="color:#e3b341">⏸ Bot 1 &amp; Bot 2 Pause Status</h3>
+    <p style="color:#8b949e;font-size:12px;margin:8px 0 12px">Bot 1 (15m sniper) and Bot 2 (1h sniper) are paused while testing Bot 3. Change <code>paused_bots</code> in config.yaml to resume them.</p>
+    <div id="b3PausedStatus" style="font-size:13px;color:#e6edf3">—</div>
+  </div>
+</div>
+
 </div>
 
 <hr class="divider">
@@ -815,19 +897,93 @@ function _updateStateInner(s) {
     document.getElementById('b2Markets').textContent      = s.config.markets_1h_count != null ? s.config.markets_1h_count : '—';
   }
 
-  // Bot 3 status
-  const sct = s.config.copy_trader || {};
-  document.getElementById('b3Status').textContent          = sct.enabled !== false ? '✅ Enabled' : '⛔ Disabled';
-  document.getElementById('b3Wallet').textContent          = sct.target_wallet || '—';
-  document.getElementById('b3CurMinPrice').textContent     = sct.min_price      != null ? sct.min_price.toFixed(3)      : '—';
-  document.getElementById('b3CurPerMarket').textContent    = sct.max_per_market  != null ? '$'+sct.max_per_market        : '—';
-  document.getElementById('b3CurPollInterval').textContent = sct.poll_interval_seconds != null ? sct.poll_interval_seconds+'s' : '—';
-  if (sct.min_price && !document.getElementById('b3MinPrice')._loaded) {
-    document.getElementById('b3MinPrice').value      = sct.min_price;
-    document.getElementById('b3MaxPerMarket').value  = sct.max_per_market || 100;
-    document.getElementById('b3PollInterval').value  = sct.poll_interval_seconds || 5;
-    document.getElementById('b3Enabled').value       = sct.enabled !== false ? 'true' : 'false';
-    document.getElementById('b3MinPrice')._loaded    = true;
+  // Bot 3 — Arb State
+  const arb = s.arb_state || {};
+  const arbCfg = s.config.arb_bot || {};
+  const paused = s.config.paused_bots || [];
+
+  // Status / config display
+  document.getElementById('b3Status').textContent      = arbCfg.enabled !== false ? '✅ Enabled' : '⛔ Disabled';
+  document.getElementById('b3CurThreshold').textContent = arbCfg.arb_threshold  != null ? arbCfg.arb_threshold.toFixed(3) : '—';
+  document.getElementById('b3CurSize').textContent      = arbCfg.size_usdc       != null ? '$'+arbCfg.size_usdc           : '—';
+  document.getElementById('b3CurMaxConc').textContent   = arbCfg.max_concurrent_arbs != null ? arbCfg.max_concurrent_arbs : '—';
+  document.getElementById('b3CurComplete').textContent  = arb.total_complete  != null ? arb.total_complete  : '—';
+  document.getElementById('b3CurCancelled').textContent = arb.total_cancelled != null ? arb.total_cancelled : '—';
+  if (arb.last_scan_at) {
+    const secs = Math.round(Date.now()/1000 - arb.last_scan_at);
+    document.getElementById('b3LastScan').textContent = secs + 's ago';
+  }
+
+  // Metrics cards
+  if (arb.total_locked_profit != null)
+    document.getElementById('b3TotalProfit').textContent = '$' + arb.total_locked_profit.toFixed(4);
+  if (arb.total_cost_deployed != null)
+    document.getElementById('b3TotalCost').textContent = '$' + arb.total_cost_deployed.toFixed(2);
+  if (arb.total_complete != null)
+    document.getElementById('b3TotalComplete').textContent = arb.total_complete + ' arbs completed';
+  if (arb.active_arbs != null)
+    document.getElementById('b3ActiveArbsCount').textContent = arb.active_arbs.length + ' arbs in-flight';
+  if (arb.opportunities_seen != null)
+    document.getElementById('b3OpsSeen').textContent = arb.opportunities_seen;
+  if (arb.scan_count != null)
+    document.getElementById('b3ScanCount').textContent = arb.scan_count.toLocaleString() + ' scans';
+
+  // Paused bots notice
+  const pb = document.getElementById('b3PausedStatus');
+  if (pb) {
+    const b1p = paused.includes('bot1');
+    const b2p = paused.includes('bot2');
+    pb.innerHTML = [
+      `<span style="color:${b1p?'#e3b341':'#3fb950'}">${b1p?'⏸':'▶'} Bot 1 (15m Sniper): ${b1p?'PAUSED':'ACTIVE'}</span>`,
+      `<span style="color:${b2p?'#e3b341':'#3fb950'};margin-left:24px">${b2p?'⏸':'▶'} Bot 2 (1h Sniper): ${b2p?'PAUSED':'ACTIVE'}</span>`,
+    ].join('');
+  }
+
+  // Load settings inputs once
+  if (arbCfg.arb_threshold != null && !document.getElementById('b3Threshold')._loaded) {
+    document.getElementById('b3Enabled').checked      = arbCfg.enabled !== false;
+    document.getElementById('b3Threshold').value      = arbCfg.arb_threshold || 0.97;
+    document.getElementById('b3SizeUsdc').value       = arbCfg.size_usdc || 50;
+    document.getElementById('b3MaxConcurrent').value  = arbCfg.max_concurrent_arbs || 4;
+    document.getElementById('b3MinTte').value         = arbCfg.min_tte_seconds || 300;
+    document.getElementById('b3FillTimeout').value    = arbCfg.fill_timeout_seconds || 60;
+    document.getElementById('b3Threshold')._loaded    = true;
+  }
+
+  // Active arbs table
+  const arbTbody = document.getElementById('b3ActiveArbs');
+  if (arb.active_arbs && arb.active_arbs.length > 0) {
+    arbTbody.innerHTML = arb.active_arbs.map(a => `
+      <tr>
+        <td style="font-family:monospace;font-size:10px">${a.arb_id}</td>
+        <td><b>${a.coin}</b></td>
+        <td style="color:#3fb950">${a.yes_ask.toFixed(4)}</td>
+        <td style="color:#f85149">${a.no_ask.toFixed(4)}</td>
+        <td style="color:${a.combined<=0.97?'#3fb950':'#e3b341'}">${a.combined.toFixed(4)}</td>
+        <td>${a.contracts.toFixed(2)}</td>
+        <td>$${a.total_cost.toFixed(2)}</td>
+        <td style="color:#3fb950;font-weight:bold">+$${a.locked_profit.toFixed(4)}</td>
+        <td><span style="color:#e3b341">${a.status}</span> ${a.yes_filled?'✓Y':'⏳Y'} ${a.no_filled?'✓N':'⏳N'}</td>
+        <td>${a.age_seconds}s</td>
+      </tr>`).join('');
+  } else {
+    arbTbody.innerHTML = '<tr><td colspan="10" style="color:#8b949e;text-align:center;padding:16px">No active arbs</td></tr>';
+  }
+
+  // Recent completed arbs table
+  const rcTbody = document.getElementById('b3RecentArbs');
+  if (arb.recent_complete && arb.recent_complete.length > 0) {
+    rcTbody.innerHTML = [...arb.recent_complete].reverse().map(a => `
+      <tr>
+        <td style="font-family:monospace;font-size:10px">${a.arb_id}</td>
+        <td><b>${a.coin}</b></td>
+        <td>${a.combined.toFixed(4)}</td>
+        <td>$${a.total_cost.toFixed(2)}</td>
+        <td style="color:#3fb950;font-weight:bold">+$${a.locked_profit.toFixed(4)}</td>
+        <td><span style="${a.status==='complete'?'color:#3fb950':'color:#e3b341'}">${a.status}</span></td>
+      </tr>`).join('');
+  } else {
+    rcTbody.innerHTML = '<tr><td colspan="6" style="color:#8b949e;text-align:center;padding:16px">No completed arbs yet</td></tr>';
   }
 
   // Active Orders
@@ -1009,11 +1165,14 @@ function saveGlobalSafety() {
 function saveBot3() {
   const msg = document.getElementById('bot3Msg');
   api('/settings/bot3', {
-    enabled:       document.getElementById('b3Enabled').value === 'true',
-    min_price:     parseFloat(document.getElementById('b3MinPrice').value),
-    max_per_market:parseFloat(document.getElementById('b3MaxPerMarket').value),
-    poll_interval: parseInt(document.getElementById('b3PollInterval').value),
+    enabled:              document.getElementById('b3Enabled').checked,
+    arb_threshold:        parseFloat(document.getElementById('b3Threshold').value),
+    size_usdc:            parseFloat(document.getElementById('b3SizeUsdc').value),
+    max_concurrent_arbs:  parseInt(document.getElementById('b3MaxConcurrent').value),
+    min_tte_seconds:      parseInt(document.getElementById('b3MinTte').value),
+    fill_timeout_seconds: parseInt(document.getElementById('b3FillTimeout').value),
   }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
+  document.getElementById('b3Threshold')._loaded = false;
 }
 
 function saveBudget() {
@@ -1231,14 +1390,16 @@ async function loadBotSummary() {
         </tbody>
       </table>`;
 
-    // Bot 3
-    const b3 = d.bot3 || {};
+    // Bot 3 — show arb state from live state if available
+    const arbS = state.arb_state || {};
     document.getElementById('bsBot3').innerHTML = `
-      <h4>Bot 3 — Copy Trader</h4>
+      <h4>Bot 3 — Arb Maker</h4>
       <table class="bs-table">
-        <thead><tr><th></th><th>Trades</th><th>Volume</th><th>P&amp;L</th><th>Win %</th></tr></thead>
+        <thead><tr><th></th><th>Count</th><th>Cost</th><th>Locked $</th><th></th></tr></thead>
         <tbody>
-          ${row('Copy', b3, true)}
+          <tr><td>Complete</td><td>${arbS.total_complete||0}</td><td>$${(arbS.total_cost_deployed||0).toFixed(2)}</td><td class="pos">+$${(arbS.total_locked_profit||0).toFixed(4)}</td><td></td></tr>
+          <tr><td>In-Flight</td><td>${(arbS.active_arbs||[]).length}</td><td>—</td><td>—</td><td></td></tr>
+          <tr class="total-row"><td>Ops Seen</td><td colspan="3">${arbS.opportunities_seen||0} opportunities / ${(arbS.scan_count||0).toLocaleString()} scans</td><td></td></tr>
         </tbody>
       </table>`;
 
@@ -1576,25 +1737,27 @@ async def update_snipe1h(data: Snipe1hUpdate):
 
 
 @app.post("/settings/bot3")
-async def update_bot3(data: Bot3Update):
-    if data.min_price < 0.50:
-        raise HTTPException(400, "min_price cannot be below 0.50")
+async def update_bot3(data: ArbBotUpdate):
+    if data.arb_threshold < 0.90 or data.arb_threshold > 0.98:
+        raise HTTPException(400, "arb_threshold must be between 0.90 and 0.98")
+    if data.size_usdc < 10:
+        raise HTTPException(400, "size_usdc must be at least $10")
     config = load_config()
-    config.setdefault("copy_trader", {}).update({
+    config.setdefault("arb_bot", {}).update({
         "enabled":              data.enabled,
-        "min_price":            round(data.min_price, 3),
-        "max_per_market":       data.max_per_market,
-        "poll_interval_seconds": data.poll_interval,
+        "arb_threshold":        round(data.arb_threshold, 3),
+        "size_usdc":            data.size_usdc,
+        "max_concurrent_arbs":  data.max_concurrent_arbs,
+        "min_tte_seconds":      data.min_tte_seconds,
+        "fill_timeout_seconds": data.fill_timeout_seconds,
     })
     save_config(config)
     bot = get_bot()
     if bot:
-        bot.config.setdefault("copy_trader", {}).update(config["copy_trader"])
-        bot.copy_trader.min_price      = data.min_price
-        bot.copy_trader.max_per_market = data.max_per_market
-        bot.copy_trader.poll_interval  = data.poll_interval
+        bot.config.setdefault("arb_bot", {}).update(config["arb_bot"])
+        bot.arb_bot.config = bot.config
     status = "enabled" if data.enabled else "disabled"
-    return {"message": f"Bot 3 updated — {status}, min={data.min_price}, max/market=${data.max_per_market}"}
+    return {"message": f"Bot 3 (Arb) updated — {status}, threshold={data.arb_threshold}, size=${data.size_usdc}/arb"}
 
 
 @app.post("/settings/global")

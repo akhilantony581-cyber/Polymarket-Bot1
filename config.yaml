@@ -128,15 +128,32 @@ snipe_1h:
   window_seconds: 900    # fire in last 15 minutes of the 1h market (was 25m)
 
 
-# --- Bot 3 — Copy Trader ---
-# Mirrors trades from a target Polymarket wallet.
-# Applies same Binance momentum gate as bot1/bot2.
-copy_trader:
+# --- Bot 3 — Locked Arbitrage Market Maker ---
+# Buys equal contracts of YES + NO on 1h crypto markets whenever
+# YES_ask + NO_ask ≤ arb_threshold.  Profit is guaranteed regardless
+# of direction: N × (0.98 − YES_ask − NO_ask) USDC per arb.
+# 2% redemption fee is already baked into the 0.98 effective payout.
+arb_bot:
   enabled: true
+  arb_threshold: 0.97          # fire when YES_ask+NO_ask ≤ this (1%+ guaranteed profit after fee)
+  size_usdc: 50.0              # total USDC per arb (split equally as contracts between YES+NO)
+  max_concurrent_arbs: 4       # max arbs in-flight at once
+  min_tte_seconds: 300         # minimum 5 min remaining on 1h market before entering
+  fill_timeout_seconds: 60     # cancel unfilled legs after this many seconds
+  market_cooldown_seconds: 120 # seconds before re-entering the same market
+
+# --- Bot 3 — Copy Trader (DISABLED — replaced by arb_bot) ---
+copy_trader:
+  enabled: false
   target_wallet: "0xf247584e41117bbbe4cc06e4d2c95741792a5216"
   min_price: 0.89
   max_per_market: 100.0
   poll_interval_seconds: 5
+
+# --- Paused Bots ---
+# List bot names here to disable their trading loops while keeping them running.
+# Valid values: "bot1" (15m/5m sniper), "bot2" (1h sniper)
+paused_bots: ["bot1", "bot2"]
 
 execution:
   polygon_rpc: "${POLYGON_RPC_URL}"

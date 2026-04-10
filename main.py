@@ -19,7 +19,7 @@ from execution_engine import ExecutionEngine
 from order_manager import OrderManager, ManagedPosition
 from risk_manager import RiskManager
 from structured_logger import StructuredLogger
-from copy_trader import CopyTrader
+from arb_bot import ArbBot
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +82,10 @@ class TradingBot:
             on_redeem=self._on_redeem,
         )
 
-        self.copy_trader = CopyTrader(
+        self.arb_bot = ArbBot(
             config=config,
-            order_manager=self.order_manager,
-            binance=self.binance,
-            on_fill=self.structured_log.log_trade_open,
+            execution=self.execution,
+            poly_listener=self.poly_listener,
         )
 
     async def start(self):
@@ -102,8 +101,8 @@ class TradingBot:
         await self.binance.start()
         await self.poly_listener.start()
         await self.order_manager.start()
-        if self.config.get("copy_trader", {}).get("enabled", False):
-            await self.copy_trader.start()
+        if self.config.get("arb_bot", {}).get("enabled", True):
+            await self.arb_bot.start()
 
         # Give feeds time to warm up
         logger.info("Waiting for data feeds to warm up (5s)...")
@@ -120,7 +119,7 @@ class TradingBot:
 
     async def stop(self):
         self._running = False
-        await self.copy_trader.stop()
+        await self.arb_bot.stop()
         await self.binance.stop()
         await self.poly_listener.stop()
         await self.order_manager.stop()
@@ -335,6 +334,13 @@ class TradingBot:
                 logger.info(f"DIAG | {k}: {v}")
 
     async def _scan_markets(self):
+        # Respect paused_bots config — skip Bot1/Bot2 scanning when listed
+        paused_bots = self.config.get("paused_bots", [])
+        if "bot1" in paused_bots and "bot2" in paused_bots:
+            return  # Both paused — nothing to scan
+        bot1_paused = "bot1" in paused_bots
+        bot2_paused = "bot2" in paused_bots
+
         max_per_trade  = self.config["capital"].get("max_per_trade", 20.0)
         max_per_market = self.config["capital"].get("max_per_market", 40.0)
 
@@ -370,19 +376,21 @@ class TradingBot:
 
             # Route 1h markets to their own settings
             if market.timeframe == "1h":
-                if not s1h_enabled:
+                if bot2_paused or not s1h_enabled:
                     continue
                 tf_window   = s1h_window
                 tf_min      = s1h_min_price
                 tf_max_trade  = s1h_max_trade
                 tf_max_market = s1h_max_market
             elif market.timeframe == "15m":
+                if bot1_paused:
+                    continue
                 tf_window   = 180
                 tf_min      = sniper_min
                 tf_max_trade  = max_per_trade
                 tf_max_market = max_per_market
             else:
-                # 5m — disabled
+                # 5m handled by Snipe 3 below
                 continue
 
             if market.seconds_to_expiry > tf_window:
@@ -488,7 +496,7 @@ class TradingBot:
 
         # ── Snipe 2: last 10 seconds, price >= 0.95 ────────────────────────
         s2 = self.config.get("snipe2", {})
-        if not s2.get("enabled", True):
+        if not s2.get("enabled", True) or bot1_paused:
             return
         s2_min_price  = s2.get("min_price", 0.95)
         s2_max_trade  = s2.get("max_per_trade", 10.0)
@@ -571,7 +579,7 @@ class TradingBot:
 
         # ── Snipe 3: contrarian bet — buy losing side at ≤ $0.02 in 5m markets ──
         s3 = self.config.get("snipe3", {})
-        if not s3.get("enabled", True):
+        if not s3.get("enabled", True) or bot1_paused:
             return
         s3_max_price  = s3.get("max_entry_price", 0.02)
         s3_max_trade  = s3.get("max_per_trade", 1.0)
@@ -935,6 +943,7 @@ class TradingBot:
                     self.config = new_config
                     self.signal_engine.reload_config(new_config)
                     self.risk_manager.reload_config(new_config)
+                    self.arb_bot.config = new_config
                     logger.info("Config reloaded from disk")
             except Exception as e:
                 logger.warning(f"Config reload error: {e}")
@@ -955,7 +964,7 @@ class TradingBot:
                     "coin": p.market.coin,
                     "timeframe": p.market.timeframe,
                     "mode": p.mode,
-                    "bot": "Bot3" if p.mode == "copy" else ("Bot2" if getattr(p.market, "timeframe", "") == "1h" else "Bot1"),
+                    "bot": "Bot3" if p.mode == "arb" else ("Bot2" if getattr(p.market, "timeframe", "") == "1h" else "Bot1"),
                     "price": p.entry_price,
                     "size": p.entry_usdc,
                     "age": round(p.order.age_seconds, 1),
@@ -968,7 +977,7 @@ class TradingBot:
                     "market_id": p.market.market_id,
                     "coin": p.market.coin,
                     "mode": p.mode,
-                    "bot": "Bot3" if p.mode == "copy" else ("Bot2" if getattr(p.market, "timeframe", "") == "1h" else "Bot1"),
+                    "bot": "Bot3" if p.mode == "arb" else ("Bot2" if getattr(p.market, "timeframe", "") == "1h" else "Bot1"),
                     "entry_price": p.entry_price,
                     "size": p.entry_usdc,
                     "trade_side": getattr(p, "trade_side", "yes"),
@@ -991,7 +1000,8 @@ class TradingBot:
                 "snipe2": self.config.get("snipe2", {}),
                 "snipe3": self.config.get("snipe3", {}),
                 "snipe_1h": self.config.get("snipe_1h", {}),
-                "copy_trader": self.config.get("copy_trader", {}),
+                "arb_bot": self.config.get("arb_bot", {}),
+                "paused_bots": self.config.get("paused_bots", []),
                 "global_safety": self.config.get("global_safety", {"min_price": 0.89, "max_per_market": 100.0}),
                 "markets_1h_count": sum(
                     1 for m in self.poly_listener.markets.values()
@@ -999,6 +1009,7 @@ class TradingBot:
                 ),
             },
             "prices": self._get_prices(),
+            "arb_state": self.arb_bot.get_state(),
         }
 
     def _get_prices(self) -> dict:

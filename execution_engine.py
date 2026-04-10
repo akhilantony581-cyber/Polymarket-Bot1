@@ -164,7 +164,7 @@ class ExecutionEngine:
         if price < global_floor:
             logger.warning(f"GLOBAL SAFETY: Rejected order price={price:.4f} below global floor {global_floor}")
             return None
-        if mode not in ("manual", "snipe2", "sniper") and price < self.config.get("price", {}).get("min_entry", 0.98):
+        if mode not in ("manual", "snipe2", "sniper", "arb") and price < self.config.get("price", {}).get("min_entry", 0.98):
             logger.warning(f"Rejected: price {price} below hard floor")
             return None
         if not self._clob:
