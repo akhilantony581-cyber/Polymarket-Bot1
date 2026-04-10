@@ -289,6 +289,22 @@ class TradingBot:
                     skip_reasons[key] = f"boundary mom={mom:.3f}%"
                     continue
 
+            # Volatility gate in diagnostics
+            vg_cfg = self.config.get("volatility_gate", {})
+            if vg_cfg.get("enabled", True):
+                bd2 = self.binance.get(m.coin)
+                if bd2 and self.binance.is_ready(m.coin) and bd2.price > 0:
+                    vg_vol = bd2.volatility(vg_cfg.get("window_seconds", 60))
+                    if vg_vol is not None and vg_vol / bd2.price * 100 > vg_cfg.get("max_vol_pct", 0.08):
+                        skip_reasons[key] = f"vol_gate vol={(vg_vol/bd2.price*100):.3f}%"
+                        continue
+                    p30 = bd2.prices_last_n_seconds(30)
+                    if len(p30) >= 5:
+                        rng = (max(p30) - min(p30)) / bd2.price * 100
+                        if rng > vg_cfg.get("max_range_pct", 0.10):
+                            skip_reasons[key] = f"range_gate range={rng:.3f}%"
+                            continue
+
             if self._market_has_active_order(m.market_id):
                 skip_reasons[key] = "has_active_order"
                 continue
@@ -331,6 +347,13 @@ class TradingBot:
         mg_window   = mg.get("window_seconds", 30)
         mg_min_pct  = mg.get("min_pct", -0.05)    # allow up to -0.05% drift against direction
         mg_boundary = mg.get("boundary_pct", 0.02) # skip if |momentum| < 0.02% (undecided)
+
+        # Volatility gate config
+        vg = self.config.get("volatility_gate", {})
+        vg_enabled    = vg.get("enabled", True)
+        vg_window     = vg.get("window_seconds", 60)
+        vg_max_vol    = vg.get("max_vol_pct", 0.08)
+        vg_max_range  = vg.get("max_range_pct", 0.10)
 
         # 1h sniper config (separate settings)
         s1h = self.config.get("snipe_1h", {})
@@ -407,6 +430,29 @@ class TradingBot:
                             )
                             continue
 
+            # ── Volatility gate ─────────────────────────────────────────────
+            if vg_enabled:
+                bd = self.binance.get(market.coin)
+                if bd and self.binance.is_ready(market.coin) and bd.price > 0:
+                    vol = bd.volatility(vg_window)
+                    if vol is not None:
+                        vol_pct = vol / bd.price * 100
+                        if vol_pct > vg_max_vol:
+                            logger.debug(
+                                f"Vol gate SKIP {market.coin} {market.timeframe} "
+                                f"vol={vol_pct:.3f}% > {vg_max_vol}%"
+                            )
+                            continue
+                    prices_30s = bd.prices_last_n_seconds(30)
+                    if len(prices_30s) >= 5:
+                        range_pct = (max(prices_30s) - min(prices_30s)) / bd.price * 100
+                        if range_pct > vg_max_range:
+                            logger.debug(
+                                f"Range gate SKIP {market.coin} {market.timeframe} "
+                                f"range={range_pct:.3f}% > {vg_max_range}%"
+                            )
+                            continue
+
             if self._market_has_active_order(market.market_id):
                 continue
 
@@ -476,6 +522,21 @@ class TradingBot:
                             continue
                         if not buying_up and mom > -hard_block:
                             logger.debug(f"S2 momentum gate SKIP {market.coin} DOWN mom={mom:.3f}%")
+                            continue
+
+            # Volatility gate for snipe2 (tighter range threshold — 10s window)
+            if vg_enabled:
+                bd = self.binance.get(market.coin)
+                if bd and self.binance.is_ready(market.coin) and bd.price > 0:
+                    vol = bd.volatility(vg_window)
+                    if vol is not None and vol / bd.price * 100 > vg_max_vol:
+                        logger.debug(f"S2 vol gate SKIP {market.coin} vol={(vol/bd.price*100):.3f}%")
+                        continue
+                    prices_10s = bd.prices_last_n_seconds(10)
+                    if len(prices_10s) >= 3:
+                        range_pct = (max(prices_10s) - min(prices_10s)) / bd.price * 100
+                        if range_pct > vg_max_range:
+                            logger.debug(f"S2 range gate SKIP {market.coin} range={range_pct:.3f}%")
                             continue
 
             if self._market_has_active_order(market.market_id):

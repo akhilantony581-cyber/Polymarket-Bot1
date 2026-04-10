@@ -34,7 +34,7 @@ price:
 # --- Signal Engine ---
 signal:
   reversal_score_threshold: 5      # Only trade when score < 5 (0–100 scale)
-  buffer_from_strike_pct: 0.003    # Binance price must be this % beyond strike
+  buffer_from_strike_pct: 0.005    # Binance price must be this % beyond strike
   stability_window_seconds: 45     # Price must hold beyond strike for this long
   momentum_windows: [60, 180, 300] # 1m, 3m, 5m in seconds
 
@@ -82,13 +82,23 @@ markets:
 market_maker:
   enabled: false
 
+# --- Volatility Gate ---
+# Blocks trades when Binance realized volatility is too high (choppy/spiky market).
+# vol_pct: skip if 60s std-dev > this % of price (0.08 = calm; >0.10 = active news)
+# range_pct: skip if 30s high-low range > this % of price
+volatility_gate:
+  enabled: true
+  window_seconds: 60
+  max_vol_pct: 0.08
+  max_range_pct: 0.10
+
 # --- Momentum Gate (suggestions 2 & 4) ---
 # Blocks trades when Binance price is running against the direction being bought,
 # or when price has barely moved (too close to boundary to be confident).
 momentum_gate:
   enabled: true
   window_seconds: 30
-  min_pct: 0.01
+  min_pct: 0.05
   boundary_pct: 0.03
 
 # --- Snipe 2 Mode (last 10 seconds, any price >= 0.95) ---
@@ -102,10 +112,10 @@ snipe2:
 # --- 1h Sniper (separate settings from 5m/15m) ---
 snipe_1h:
   enabled: true
-  min_price: 0.89
+  min_price: 0.92
   max_per_trade: 10.0
   max_per_market: 60.0
-  window_seconds: 1500   # fire in last 25 minutes of the 1h market
+  window_seconds: 900    # fire in last 15 minutes of the 1h market (was 25m)
 
 
 # --- Bot 3 — Copy Trader ---
