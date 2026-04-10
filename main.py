@@ -480,13 +480,18 @@ class TradingBot:
 
             if self._market_has_active_order(market.market_id):
                 continue
-            if self._market_exposure(market.market_id) >= s2_max_market:
+            market_exp = self._market_exposure(market.market_id)
+            if market_exp >= s2_max_market:
                 continue
             can, _ = self.risk_manager.can_trade(self.order_manager.active_count + len(s2_qualifying))
             if not can:
                 break
 
             kelly_size = self._kelly_size(price, s2_min_price, s2_max_trade)
+            # Cap to remaining room so Snipe1 + Snipe2 never exceed max_per_market
+            kelly_size = min(kelly_size, s2_max_market - market_exp)
+            if kelly_size < 1.0:
+                continue
             s2_qualifying.append((market, side, price, kelly_size))
 
         async def _submit_snipe2(market, side, price, size):
