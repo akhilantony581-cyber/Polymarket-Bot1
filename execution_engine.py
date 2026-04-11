@@ -205,41 +205,17 @@ class ExecutionEngine:
         token_id: str,
         market_id: str,
         size: float,
-        min_price: float = 0.95,
+        min_price: float = 0.95,  # unused, kept for call-site compatibility
     ) -> Optional[PlacedOrder]:
         """
-        Submit a Fill-or-Kill order at price=0.9999 (CLOB max).
-        Acts as a market order: fills immediately at the best available
-        ask price, or cancels instantly if no liquidity.
-
-        Before submitting, fetches a fresh CLOB midpoint for the specific
-        token to guard against stale inferred prices (e.g. NO token price
-        inferred as 1-yes_price may differ from the actual NO ask).
-        Aborts if fresh midpoint < min_price.
+        Submit a Fill-or-Kill order at price=0.99 (highest valid tick).
+        Fills immediately at the best available ask or cancels instantly.
         """
         if not self._clob:
             logger.error("No CLOB client — order placement disabled")
             return None
 
-        # Fresh price check on the exact token we're about to buy
-        try:
-            resp = await self._http.get(
-                f"{CLOB_BASE}/midpoint",
-                params={"token_id": token_id},
-            )
-            if resp.status_code == 200:
-                fresh_mid = float(resp.json().get("mid", 0))
-                if fresh_mid > 0 and fresh_mid < min_price:
-                    logger.warning(
-                        f"SNIPE2 aborted: fresh midpoint {fresh_mid:.4f} "
-                        f"< min_price {min_price:.4f} for token {token_id[:16]}..."
-                    )
-                    return None
-        except Exception as e:
-            logger.debug(f"SNIPE2 pre-flight price check failed: {e}")
-            # proceed anyway if the check itself errors
-
-        price = 0.9999  # willing to pay up to CLOB max; fills at best ask
+        price = 0.99  # highest valid tick — FOK fills at best ask up to this price
         try:
             shares = round(size / price, 6)
             order_args = OrderArgs(

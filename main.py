@@ -399,8 +399,13 @@ class TradingBot:
 
             side, price = market.best_trade_side
 
-            # Fresh CLOB fetch when approaching threshold
-            if price < (tf_min + 0.05) and market.seconds_to_expiry <= tf_window:
+            # Snipe 1 (15m last 15s): skip CLOB fetch and both gates entirely.
+            # At T-15s the market is resolving — Binance momentum/volatility is
+            # irrelevant and the extra HTTP calls consume precious seconds.
+            is_snipe1 = market.timeframe == "15m"
+
+            # Fresh CLOB fetch when approaching threshold (skip for snipe1)
+            if not is_snipe1 and price < (tf_min + 0.05) and market.seconds_to_expiry <= tf_window:
                 await self.poly_listener._fetch_clob_prices_for_market(market)
                 side, price = market.best_trade_side
 
@@ -408,8 +413,8 @@ class TradingBot:
             if price < tf_min:
                 continue
 
-            # ── Momentum gate (suggestions 2 & 4) ──────────────────────────
-            if mg_enabled:
+            # ── Momentum gate (skipped for snipe1 — irrelevant at T-15s) ───
+            if mg_enabled and not is_snipe1:
                 bd = self.binance.get(market.coin)
                 binance_ready = bd and self.binance.is_ready(market.coin)
 
@@ -439,8 +444,8 @@ class TradingBot:
                             )
                             continue
 
-            # ── Volatility gate ─────────────────────────────────────────────
-            if vg_enabled:
+            # ── Volatility gate (skipped for snipe1 — irrelevant at T-15s) ──
+            if vg_enabled and not is_snipe1:
                 bd = self.binance.get(market.coin)
                 if bd and self.binance.is_ready(market.coin) and bd.price > 0:
                     vol = bd.volatility(vg_window)
