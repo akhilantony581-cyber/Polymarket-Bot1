@@ -39,6 +39,7 @@ class ManagedPosition:
     redeemed: bool = False
     pnl: Optional[float] = None
     last_redeem_attempt: float = 0.0   # timestamp of last redeem attempt
+    redeem_attempt_count: int = 0      # give up after N failed attempts
 
     @property
     def is_filled(self) -> bool:
@@ -92,6 +93,11 @@ class OrderManager:
         self.active_orders: Dict[str, ManagedPosition] = {}  # order_id → position
         self.filled_positions: Dict[str, ManagedPosition] = {}  # order_id → position
         self._running = False
+
+        # Track CIDs already attempted in this session so the API sweep never
+        # submits a redundant on-chain redeem transaction for the same condition.
+        # This is the primary guard against burning POL on losing positions.
+        self._attempted_redeem_cids: set = set()
 
     def _load_timeouts(self):
         std_cfg = self.config.get("standard", {})
@@ -318,10 +324,20 @@ class OrderManager:
                 for order_id, pos in list(self.filled_positions.items()):
                     if pos.redeemed or not pos.market.is_expired:
                         continue
+                    # Give up after 3 failed attempts — it's almost certainly a $0 loss
+                    if pos.redeem_attempt_count >= 3:
+                        if not pos.redeemed:
+                            logger.info(
+                                f"Marking position {order_id[:16]} as redeemed after "
+                                f"3 failed attempts (loss — $0 returned)"
+                            )
+                            pos.mark_redeemed(0.0)
+                        continue
                     if time.time() - pos.last_redeem_attempt < self.REDEEM_RETRY_INTERVAL:
                         continue
                     logger.info(f"Market expired — redeeming position {order_id[:16]}...")
                     pos.last_redeem_attempt = time.time()
+                    pos.redeem_attempt_count += 1
                     await self._attempt_redeem(pos)
                     await asyncio.sleep(2)
 
@@ -342,6 +358,29 @@ class OrderManager:
                         cid = p.get("conditionId") or p.get("condition_id", "")
                         if not cid:
                             continue
+
+                        # ── Guard 1: never retry a CID we've already attempted this session ──
+                        if cid in self._attempted_redeem_cids:
+                            continue
+
+                        # ── Guard 2: skip positions with zero current value — they're losses ──
+                        # Redeeming a $0 position wastes gas with zero benefit.
+                        current_val = float(
+                            p.get("currentValue") or p.get("cashPayout") or
+                            p.get("value") or p.get("payout") or 0
+                        )
+                        size = float(p.get("size") or p.get("amount") or 0)
+                        if current_val <= 0.001 and size <= 0.001:
+                            logger.debug(
+                                f"Auto-redeem: skipping $0 position cid={cid[:16]} "
+                                f"(lost — no USDC to recover)"
+                            )
+                            self._attempted_redeem_cids.add(cid)
+                            continue
+
+                        # Mark as attempted BEFORE the call so crashes don't cause retries
+                        self._attempted_redeem_cids.add(cid)
+
                         # Match against tracked positions so logging works correctly
                         match = next(
                             (fp for fp in self.filled_positions.values()
@@ -361,7 +400,6 @@ class OrderManager:
                                 try:
                                     import trade_db as _tdb
                                     win = 1 if proceeds > 0 else 0
-                                    # Estimate pnl from API data if available
                                     init_val = float(
                                         p.get("initialValue") or
                                         p.get("investedAmount") or
@@ -386,6 +424,9 @@ class OrderManager:
                 f"— redeem manually on polymarket.com"
             )
             return
+
+        # Mark this CID so the API sweep never submits a duplicate on-chain tx
+        self._attempted_redeem_cids.add(pos.market.condition_id)
 
         logger.info(
             f"Attempting redeem for {pos.order.order_id[:16]} "
