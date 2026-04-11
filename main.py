@@ -480,7 +480,7 @@ class TradingBot:
             return
 
         async def _submit_one(market, side, price, size):
-            mode = "sniper_1h" if market.timeframe == "1h" else "sniper"
+            mode = "sniper_1h" if market.timeframe == "1h" else "snipe1"
             logger.info(
                 f"SNIPER [{market.coin} {market.timeframe}] "
                 f"{side.upper()}@{price:.4f} size=${size:.2f} tte={market.seconds_to_expiry:.0f}s"

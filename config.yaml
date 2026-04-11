@@ -23,7 +23,7 @@ price:
   min_entry: 0.99                  # Bot 1 Snipe 1 hard floor
   standard_max: 0.999
   sniper_min: 0.99                 # Snipe 1 trigger threshold (15m)
-  snipe1_window_seconds: 30        # Fire in last N seconds of 15m market
+  snipe1_window_seconds: 15        # Fire in last N seconds of 15m market
 
 # --- Signal Engine ---
 signal:
