@@ -209,7 +209,7 @@ class OrderManager:
         # For sniper: timeout = min(config, seconds_to_expiry - 2) so order
         # stays alive right up to market resolution without outlasting it.
         base_timeout = self._timeout_for_mode(mode)
-        if mode == "sniper":
+        if mode in ("sniper", "sniper_1h"):
             tte = market.seconds_to_expiry
             timeout = min(base_timeout, max(tte - 2, 5))
         else:
@@ -221,6 +221,9 @@ class OrderManager:
             await asyncio.sleep(
                 self.config.get("execution", {}).get("order_check_interval", 1.0)
             )
+
+            # Refresh local order reference in case reprice replaced it
+            order = pos.order
 
             # Refresh order status
             status = await self.execution.get_order_status(order)
@@ -235,7 +238,8 @@ class OrderManager:
 
             # Timeout check
             if order.age_seconds > timeout:
-                logger.info(f"Order {order.order_id} timed out after {timeout}s")
+                order.status = OrderStatus.CANCELLED  # mark immediately to stop re-entry
+                logger.info(f"Order {order.order_id} timed out after {order.age_seconds:.1f}s")
                 await self.execution.cancel_order(order)
                 self._on_order_cancelled(pos, "timeout")
                 return
@@ -245,23 +249,20 @@ class OrderManager:
                 refreshed = self.poly_listener.get_market(market.market_id)
                 if refreshed:
                     pos.market = refreshed
-                    if refreshed.yes_price < self.config.get("price", {}).get("min_entry", 0.98):
-                        logger.info(f"YES price dropped below floor — cancelling {order.order_id}")
-                        await self.execution.cancel_order(order)
-                        self._on_order_cancelled(pos, "price_below_floor")
-                        return
+                    market = refreshed
 
                     sig = self.signal_engine.evaluate(refreshed)
                     if not sig.is_tradeable():
                         logger.info(
                             f"Signal reversed — cancelling {order.order_id}: {sig.reason}"
                         )
+                        order.status = OrderStatus.CANCELLED
                         await self.execution.cancel_order(order)
                         self._on_order_cancelled(pos, f"signal_reversed:{sig.reason}")
                         return
 
             # Sniper repricing
-            if mode == "sniper" and order.age_seconds % self.SNIPER_REPRICE_INTERVAL < 1.0:
+            if mode in ("sniper", "sniper_1h") and order.age_seconds % self.SNIPER_REPRICE_INTERVAL < 1.0:
                 await self._reprice_sniper(pos)
 
     async def _reprice_sniper(self, pos: ManagedPosition):
