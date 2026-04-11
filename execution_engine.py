@@ -159,14 +159,6 @@ class ExecutionEngine:
         size: float,
         mode: str = "standard",
     ) -> Optional[PlacedOrder]:
-        # Global safety backstop — catches any bot-level miscalculation
-        global_floor = self.config.get("global_safety", {}).get("min_price", 0.89)
-        if price < global_floor:
-            logger.warning(f"GLOBAL SAFETY: Rejected order price={price:.4f} below global floor {global_floor}")
-            return None
-        if mode not in ("manual", "snipe2", "sniper", "arb") and price < self.config.get("price", {}).get("min_entry", 0.98):
-            logger.warning(f"Rejected: price {price} below hard floor")
-            return None
         if not self._clob:
             logger.error("No CLOB client — order placement disabled")
             return None
@@ -224,12 +216,6 @@ class ExecutionEngine:
         inferred as 1-yes_price may differ from the actual NO ask).
         Aborts if fresh midpoint < min_price.
         """
-        # Global safety backstop
-        global_floor = self.config.get("global_safety", {}).get("min_price", 0.89)
-        if min_price < global_floor:
-            logger.warning(f"GLOBAL SAFETY: Rejected market order min_price={min_price:.4f} below global floor {global_floor}")
-            return None
-
         if not self._clob:
             logger.error("No CLOB client — order placement disabled")
             return None

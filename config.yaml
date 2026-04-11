@@ -3,10 +3,8 @@
 # ============================================================
 
 # --- Global Safety (hard backstop — applies to ALL bots) ---
-# If any bot malfunctions and tries to place an order below this price
-# or above this per-market exposure, the execution engine will reject it.
+# Per-market exposure cap only. Price floor removed — each bot enforces its own.
 global_safety:
-  min_price: 0.89
   max_per_market: 100.0
 
 # --- Capital & Risk ---
@@ -27,9 +25,10 @@ risk:
 
 # --- Price Rules ---
 price:
-  min_entry: 0.97                  # HARD FLOOR — never buy below this
-  standard_max: 0.979
-  sniper_min: 0.97                 # Snipe 1 trigger threshold (5m/15m)
+  min_entry: 0.99                  # Bot 1 Snipe 1 hard floor
+  standard_max: 0.999
+  sniper_min: 0.99                 # Snipe 1 trigger threshold (15m)
+  snipe1_window_seconds: 30        # Fire in last N seconds of 15m market
 
 # --- Signal Engine ---
 signal:
@@ -97,14 +96,6 @@ momentum_gate:
   window_seconds: 30
   min_pct: 0.05
   boundary_pct: 0.03
-
-# --- Snipe 2 Mode (last 10 seconds, any price >= 0.95) ---
-snipe2:
-  enabled: true
-  min_price: 0.95
-  max_per_trade: 30.0
-  max_per_market: 30.0
-  window_seconds: 10
 
 # --- Snipe 3 — Contrarian bet on 5m markets (buy losing side at ≤ $0.02) ---
 # Buys the cheap/losing side (YES or NO) when it is priced at or below max_entry_price.

@@ -121,7 +121,6 @@ class ArbBotUpdate(BaseModel):
 
 
 class GlobalSafetyUpdate(BaseModel):
-    min_price: float
     max_per_market: float
 
 
@@ -297,18 +296,11 @@ DASHBOARD_HTML = """
 
 <!-- Global Safety -->
 <div class="section-pad">
-  <div class="card" style="border-color:#f85149;background:#1a0a0a">
-    <h3 style="color:#f85149">⚠ Global Safety Limits
-      <span style="color:#8b949e;font-size:10px;font-weight:normal;margin-left:8px;text-transform:none">Applies to ALL bots — hard backstop at execution layer</span>
+  <div class="card" style="border-color:#30363d">
+    <h3>Global Safety — Max Per Market Cap
+      <span style="color:#8b949e;font-size:10px;font-weight:normal;margin-left:8px;text-transform:none">Per-market exposure limit — price floor removed (each bot enforces its own)</span>
     </h3>
     <div style="display:flex;gap:32px;align-items:flex-end;flex-wrap:wrap">
-      <div>
-        <div style="color:#8b949e;font-size:11px;margin-bottom:4px">Min Price (floor)</div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <input type="number" id="globalMinPrice" min="0.50" max="0.999" step="0.001" value="0.89" style="width:90px">
-          <span style="color:#8b949e;font-size:11px">Current: <b id="globalMinPriceCur" style="color:#e6edf3">—</b></span>
-        </div>
-      </div>
       <div>
         <div style="color:#8b949e;font-size:11px;margin-bottom:4px">Max Per Market ($)</div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -317,7 +309,7 @@ DASHBOARD_HTML = """
         </div>
       </div>
       <div>
-        <button onclick="saveGlobalSafety()" style="background:#f85149;color:#fff;padding:6px 18px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:bold">Save</button>
+        <button onclick="saveGlobalSafety()" style="background:#58a6ff;color:#0d1117;padding:6px 18px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:bold">Save</button>
         <span id="globalSafetyMsg" style="margin-left:10px;font-size:12px;color:#3fb950"></span>
       </div>
     </div>
@@ -378,29 +370,15 @@ DASHBOARD_HTML = """
   </div>
 
   <div class="card">
-    <h3>Bot 1 — Snipe 2 (last 10s FOK)</h3>
-    <div class="control-row">
-      <label>Enabled</label>
-      <input type="checkbox" id="s2Enabled" checked style="width:auto">
-    </div>
-    <div class="control-row">
-      <label>Min Price</label>
-      <input type="number" id="s2MinPrice" min="0.80" max="0.99" step="0.01" value="0.95">
-    </div>
-    <div class="control-row">
-      <label>Max Per Trade ($)</label>
-      <input type="number" id="s2PerTrade" min="1" step="1" value="20">
-    </div>
-    <div class="control-row">
-      <label>Max Per Market ($)</label>
-      <input type="number" id="s2PerMarket" min="1" step="1" value="20">
-    </div>
-    <div class="control-row">
-      <label>Window (seconds)</label>
-      <input type="number" id="s2Window" min="5" max="30" step="1" value="10">
-    </div>
-    <button class="btn-save" onclick="saveSnipe2()" style="margin-top:8px">💾 Save Snipe 2</button>
-    <div id="snipe2Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+    <h3>Bot 1 — Current Parameters</h3>
+    <table>
+      <tbody>
+        <tr><td style="color:#8b949e">Sniper Min</td><td id="b1CurSniperMin">—</td></tr>
+        <tr><td style="color:#8b949e">Per Trade</td><td id="b1CurPerTrade">—</td></tr>
+        <tr><td style="color:#8b949e">Per Market</td><td id="b1CurPerMarket">—</td></tr>
+        <tr><td style="color:#8b949e">Window</td><td id="b1CurWindow">—</td></tr>
+      </tbody>
+    </table>
   </div>
 </div>
 
@@ -848,17 +826,18 @@ function _updateStateInner(s) {
   // Config sliders
   if (s.config) {
     const _set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    const _txt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
     _set('totalCapital', s.config.total_capital);
     if (s.config.max_concurrent) _set('maxConcurrent', s.config.max_concurrent);
-    if (s.config.snipe2 && !document.getElementById('s2MinPrice')._loaded) {
-      const s2 = s.config.snipe2;
-      document.getElementById('s2Enabled').checked  = s2.enabled !== false;
-      document.getElementById('s2MinPrice').value   = s2.min_price  || 0.95;
-      document.getElementById('s2PerTrade').value   = s2.max_per_trade  || 20;
-      document.getElementById('s2PerMarket').value  = s2.max_per_market || 20;
-      document.getElementById('s2Window').value     = s2.window_seconds || 10;
-      document.getElementById('s2MinPrice')._loaded = true;
+    // Bot 1 current params display
+    if (s.config.sniper_min != null) {
+      const b1w = document.getElementById('b1CurWindow');
+      const b1sm = document.getElementById('b1CurSniperMin');
+      const b1pt = document.getElementById('b1CurPerTrade');
+      const b1pm = document.getElementById('b1CurPerMarket');
+      if (b1sm) b1sm.textContent = s.config.sniper_min.toFixed(3);
+      if (b1pt) b1pt.textContent = '$' + (s.config.max_per_trade || '—');
+      if (b1pm) b1pm.textContent = '$' + (s.config.max_per_market || '—');
+      if (b1w && s.config.snipe1_window_seconds != null) b1w.textContent = s.config.snipe1_window_seconds + 's';
     }
     if (s.config.snipe3 && !document.getElementById('s3MaxPrice')._loaded) {
       const s3 = s.config.snipe3;
@@ -1033,16 +1012,12 @@ function _updateStateInner(s) {
 
   // Update global safety current values
   const gs = s.config.global_safety || {};
-  if (gs.min_price != null) {
-    document.getElementById('globalMinPriceCur').textContent = gs.min_price.toFixed(3);
-    if (!document.getElementById('globalMinPrice')._gsLoaded) {
-      document.getElementById('globalMinPrice').value = gs.min_price;
-      document.getElementById('globalMaxPerMarket').value = gs.max_per_market || 100;
-      document.getElementById('globalMinPrice')._gsLoaded = true;
-    }
-  }
   if (gs.max_per_market != null) {
     document.getElementById('globalMaxPerMarketCur').textContent = '$' + gs.max_per_market;
+    if (!document.getElementById('globalMaxPerMarket')._gsLoaded) {
+      document.getElementById('globalMaxPerMarket').value = gs.max_per_market;
+      document.getElementById('globalMaxPerMarket')._gsLoaded = true;
+    }
   }
 
   // Recent Trades
@@ -1155,11 +1130,9 @@ function saveBot2() {
 function saveGlobalSafety() {
   const msg = document.getElementById('globalSafetyMsg');
   api('/settings/global', {
-    min_price:      parseFloat(document.getElementById('globalMinPrice').value),
     max_per_market: parseFloat(document.getElementById('globalMaxPerMarket').value),
   }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); })
     .catch(e => { msg.textContent = 'Error: ' + e; msg.style.color='#f85149'; });
-  document.getElementById('globalMinPrice')._gsLoaded = false;
 }
 
 function saveBot3() {
@@ -1201,16 +1174,6 @@ async function manualRedeem() {
   });
   const data = await resp.json();
   document.getElementById('redeemResult').textContent = data.message || data.detail || JSON.stringify(data);
-}
-
-function saveSnipe2() {
-  api('/settings/snipe2', {
-    enabled:    document.getElementById('s2Enabled').checked,
-    min_price:  parseFloat(document.getElementById('s2MinPrice').value),
-    per_trade:  parseFloat(document.getElementById('s2PerTrade').value),
-    per_market: parseFloat(document.getElementById('s2PerMarket').value),
-    window:     parseInt(document.getElementById('s2Window').value),
-  });
 }
 
 function saveSnipe3() {
@@ -1703,14 +1666,15 @@ async def update_bot1(data: Bot1Update):
     config = load_config()
     config["price"]["sniper_min"] = round(data.sniper_min, 4)
     config["price"]["min_entry"] = round(data.min_entry, 4)
+    config["price"]["snipe1_window_seconds"] = data.window
     config["capital"]["max_per_trade"] = data.per_trade
     config["capital"]["max_per_market"] = data.per_market
-    config["sniper"]["order_timeout_seconds"] = data.window
     save_config(config)
     bot = get_bot()
     if bot:
         bot.config["price"]["sniper_min"] = round(data.sniper_min, 4)
         bot.config["price"]["min_entry"] = round(data.min_entry, 4)
+        bot.config["price"]["snipe1_window_seconds"] = data.window
         bot.config["capital"]["max_per_trade"] = data.per_trade
         bot.config["capital"]["max_per_market"] = data.per_market
     return {"message": f"Bot 1 updated — sniper_min={data.sniper_min}, min_entry={data.min_entry}, ${data.per_trade}/trade, window={data.window}s"}
@@ -1762,21 +1726,16 @@ async def update_bot3(data: ArbBotUpdate):
 
 @app.post("/settings/global")
 async def update_global_safety(data: GlobalSafetyUpdate):
-    if data.min_price < 0.50:
-        raise HTTPException(400, "Global min_price cannot be below 0.50")
     if data.max_per_market < 1:
         raise HTTPException(400, "Global max_per_market must be at least $1")
     config = load_config()
-    config.setdefault("global_safety", {}).update({
-        "min_price":    round(data.min_price, 3),
-        "max_per_market": data.max_per_market,
-    })
+    config.setdefault("global_safety", {})["max_per_market"] = data.max_per_market
     save_config(config)
     bot = get_bot()
     if bot:
-        bot.config.setdefault("global_safety", {}).update(config["global_safety"])
+        bot.config.setdefault("global_safety", {})["max_per_market"] = data.max_per_market
         bot.execution.config["global_safety"] = config["global_safety"]
-    return {"message": f"Global safety updated — min_price={data.min_price}, max_per_market=${data.max_per_market}"}
+    return {"message": f"Global safety updated — max_per_market=${data.max_per_market}"}
 
 
 @app.post("/settings/trade")
@@ -1966,29 +1925,6 @@ async def cancel_order(data: CancelOrderRequest):
     raise HTTPException(500, "Cancel failed")
 
 
-class Snipe2Update(BaseModel):
-    enabled: bool = True
-    min_price: float = 0.95
-    per_trade: float = 10.0
-    per_market: float = 20.0
-    window: int = 10
-
-
-@app.post("/settings/snipe2")
-async def update_snipe2(data: Snipe2Update):
-    config = load_config()
-    config["snipe2"] = {
-        "enabled":    data.enabled,
-        "min_price":  round(data.min_price, 3),
-        "max_per_trade":  data.per_trade,
-        "max_per_market": data.per_market,
-        "window_seconds": data.window,
-    }
-    save_config(config)
-    bot = get_bot()
-    if bot:
-        bot.config["snipe2"] = config["snipe2"]
-    return {"message": f"Snipe 2 updated — {'enabled' if data.enabled else 'disabled'}, min={data.min_price}, ${data.per_trade}/trade"}
 
 
 class Snipe3Update(BaseModel):

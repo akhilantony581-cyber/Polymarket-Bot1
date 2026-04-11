@@ -235,9 +235,10 @@ class TradingBot:
         binance_ok    = [c for c in self.config["markets"]["coins"] if self.binance.is_ready(c)]
         binance_stale = [c for c in self.config["markets"]["coins"] if not self.binance.is_ready(c)]
 
-        sniper_min   = self.config.get("price", {}).get("sniper_min", 0.97)
-        s1h_min      = self.config.get("snipe_1h", {}).get("min_price", 0.89)
-        s1h_window   = self.config.get("snipe_1h", {}).get("window_seconds", 1500)
+        sniper_min    = self.config.get("price", {}).get("sniper_min", 0.99)
+        snipe1_window = self.config.get("price", {}).get("snipe1_window_seconds", 30)
+        s1h_min       = self.config.get("snipe_1h", {}).get("min_price", 0.89)
+        s1h_window    = self.config.get("snipe_1h", {}).get("window_seconds", 1500)
         mg            = self.config.get("momentum_gate", {})
         mg_enabled    = mg.get("enabled", True)
         mg_min_pct    = mg.get("min_pct", 0.01)
@@ -253,7 +254,7 @@ class TradingBot:
             if tf == "1h":
                 tf_window, tf_min = s1h_window, s1h_min
             elif tf == "15m":
-                tf_window, tf_min = 180, sniper_min
+                tf_window, tf_min = snipe1_window, sniper_min
             else:
                 continue  # 5m disabled
 
@@ -344,8 +345,8 @@ class TradingBot:
         max_per_trade  = self.config["capital"].get("max_per_trade", 20.0)
         max_per_market = self.config["capital"].get("max_per_market", 40.0)
 
-        # Snipe 1 threshold (default 0.97 — lower than old 0.99 for more trades)
-        sniper_min = self.config.get("price", {}).get("sniper_min", 0.97)
+        sniper_min   = self.config.get("price", {}).get("sniper_min", 0.99)
+        snipe1_window = self.config.get("price", {}).get("snipe1_window_seconds", 30)
 
         # Momentum gate config
         mg = self.config.get("momentum_gate", {})
@@ -385,7 +386,7 @@ class TradingBot:
             elif market.timeframe == "15m":
                 if bot1_paused:
                     continue
-                tf_window   = 180
+                tf_window   = snipe1_window
                 tf_min      = sniper_min
                 tf_max_trade  = max_per_trade
                 tf_max_market = max_per_market
@@ -493,89 +494,6 @@ class TradingBot:
                 self.risk_manager.record_trade_open(pos)
 
         await asyncio.gather(*[_submit_one(m, s, p, sz) for m, s, p, sz in qualifying])
-
-        # ── Snipe 2: last 10 seconds, price >= 0.95 ────────────────────────
-        s2 = self.config.get("snipe2", {})
-        if not s2.get("enabled", True) or bot1_paused:
-            return
-        s2_min_price  = s2.get("min_price", 0.95)
-        s2_max_trade  = s2.get("max_per_trade", 10.0)
-        s2_max_market = s2.get("max_per_market", 20.0)
-        s2_window     = s2.get("window_seconds", 10)
-
-        s2_qualifying = []
-        for market in list(self.poly_listener.markets.values()):
-            if market.is_expired:
-                continue
-            if market.seconds_to_expiry > s2_window:
-                continue
-            side, price = market.best_trade_side
-            price = min(price, 0.99)
-            if price < s2_min_price:
-                continue
-
-            # Momentum gate for snipe2
-            if mg_enabled:
-                bd = self.binance.get(market.coin)
-                binance_ready = bd and self.binance.is_ready(market.coin)
-                if not binance_ready:
-                    pass  # No Binance data — skip momentum check, price floor already applied
-                else:
-                    mom = bd.momentum(15)  # shorter window for last-10s trades
-                    if mom is not None:
-                        buying_up = (side == "yes")
-                        hard_block = mg_min_pct * 3  # only block truly sharp reversals
-                        if buying_up and mom < hard_block:
-                            logger.debug(f"S2 momentum gate SKIP {market.coin} UP mom={mom:.3f}%")
-                            continue
-                        if not buying_up and mom > -hard_block:
-                            logger.debug(f"S2 momentum gate SKIP {market.coin} DOWN mom={mom:.3f}%")
-                            continue
-
-            # Volatility gate for snipe2 (tighter range threshold — 10s window)
-            if vg_enabled:
-                bd = self.binance.get(market.coin)
-                if bd and self.binance.is_ready(market.coin) and bd.price > 0:
-                    vol = bd.volatility(vg_window)
-                    if vol is not None and vol / bd.price * 100 > vg_max_vol:
-                        logger.debug(f"S2 vol gate SKIP {market.coin} vol={(vol/bd.price*100):.3f}%")
-                        continue
-                    prices_10s = bd.prices_last_n_seconds(10)
-                    if len(prices_10s) >= 3:
-                        range_pct = (max(prices_10s) - min(prices_10s)) / bd.price * 100
-                        if range_pct > vg_max_range:
-                            logger.debug(f"S2 range gate SKIP {market.coin} range={range_pct:.3f}%")
-                            continue
-
-            if self._market_has_active_order(market.market_id):
-                continue
-            market_exp = self._market_exposure(market.market_id)
-            if market_exp >= s2_max_market:
-                continue
-            can, _ = self.risk_manager.can_trade(self.order_manager.active_count + len(s2_qualifying))
-            if not can:
-                break
-
-            kelly_size = self._kelly_size(price, s2_min_price, s2_max_trade)
-            # Cap to remaining room so Snipe1 + Snipe2 never exceed max_per_market
-            kelly_size = min(kelly_size, s2_max_market - market_exp)
-            if kelly_size < 1.0:
-                continue
-            s2_qualifying.append((market, side, price, kelly_size))
-
-        async def _submit_snipe2(market, side, price, size):
-            logger.info(
-                f"SNIPE2 [{market.coin} {market.timeframe}] "
-                f"{side.upper()}@{price:.4f} size=${size:.2f} tte={market.seconds_to_expiry:.0f}s"
-            )
-            pos = await self.order_manager.submit(
-                market=market, price=price, usdc_size=size, mode="snipe2",
-            )
-            if pos:
-                self.risk_manager.record_trade_open(pos)
-
-        if s2_qualifying:
-            await asyncio.gather(*[_submit_snipe2(m, s, p, sz) for m, s, p, sz in s2_qualifying])
 
         # ── Snipe 3: contrarian bet — buy losing side at ≤ $0.02 in 5m markets ──
         s3 = self.config.get("snipe3", {})
@@ -992,12 +910,12 @@ class TradingBot:
             ],
             "config": {
                 "min_entry": self.config["price"]["min_entry"],
-                "sniper_min": self.config["price"].get("sniper_min", 0.97),
+                "sniper_min": self.config["price"].get("sniper_min", 0.99),
+                "snipe1_window_seconds": self.config["price"].get("snipe1_window_seconds", 30),
                 "total_capital": self.config["capital"]["total"],
                 "max_concurrent": self.config["capital"]["max_concurrent_trades"],
                 "max_per_trade": self.config["capital"].get("max_per_trade", 10.0),
                 "max_per_market": self.config["capital"].get("max_per_market", 20.0),
-                "snipe2": self.config.get("snipe2", {}),
                 "snipe3": self.config.get("snipe3", {}),
                 "snipe_1h": self.config.get("snipe_1h", {}),
                 "arb_bot": self.config.get("arb_bot", {}),
