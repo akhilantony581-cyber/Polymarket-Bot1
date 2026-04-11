@@ -164,6 +164,7 @@ class ExecutionEngine:
             return None
 
         try:
+            price = round(price, 2)  # Polymarket tick size = $0.01
             shares = round(size / price, 6)
             order_args = OrderArgs(
                 token_id=token_id,
@@ -413,7 +414,7 @@ class ExecutionEngine:
         return await self.place_limit_order(
             token_id=token_id,
             market_id=market_id,
-            price=new_price,
+            price=round(new_price, 2),
             size=remaining * new_price,
             mode="sniper",
         )
