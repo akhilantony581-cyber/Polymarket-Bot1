@@ -2,11 +2,6 @@
 # Polymarket Trading Bot — Configuration
 # ============================================================
 
-# --- Global Safety (hard backstop — applies to ALL bots) ---
-# Per-market exposure cap only. Price floor removed — each bot enforces its own.
-global_safety:
-  max_per_market: 100.0
-
 # --- Capital & Risk ---
 capital:
   total: 150.0
@@ -125,7 +120,7 @@ snipe_1h:
 # of direction: N × (0.98 − YES_ask − NO_ask) USDC per arb.
 # 2% redemption fee is already baked into the 0.98 effective payout.
 arb_bot:
-  enabled: true
+  enabled: false
   arb_threshold: 0.97          # fire when YES_ask+NO_ask ≤ this (1%+ guaranteed profit after fee)
   size_usdc: 50.0              # total USDC per arb (split equally as contracts between YES+NO)
   max_concurrent_arbs: 4       # max arbs in-flight at once
@@ -144,7 +139,7 @@ copy_trader:
 # --- Paused Bots ---
 # List bot names here to disable their trading loops while keeping them running.
 # Valid values: "bot1" (15m/5m sniper), "bot2" (1h sniper)
-paused_bots: ["bot1", "bot2"]
+paused_bots: []
 
 execution:
   polygon_rpc: "${POLYGON_RPC_URL}"

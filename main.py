@@ -920,7 +920,6 @@ class TradingBot:
                 "snipe_1h": self.config.get("snipe_1h", {}),
                 "arb_bot": self.config.get("arb_bot", {}),
                 "paused_bots": self.config.get("paused_bots", []),
-                "global_safety": self.config.get("global_safety", {"min_price": 0.89, "max_per_market": 100.0}),
                 "markets_1h_count": sum(
                     1 for m in self.poly_listener.markets.values()
                     if getattr(m, "timeframe", "") == "1h" and not m.is_expired

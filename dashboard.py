@@ -120,10 +120,6 @@ class ArbBotUpdate(BaseModel):
     fill_timeout_seconds: int = 60
 
 
-class GlobalSafetyUpdate(BaseModel):
-    max_per_market: float
-
-
 class TradeUpdate(BaseModel):
     kelly_score_95: float
     kelly_score_90: float
@@ -292,29 +288,6 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
-<hr class="divider">
-
-<!-- Global Safety -->
-<div class="section-pad">
-  <div class="card" style="border-color:#30363d">
-    <h3>Global Safety — Max Per Market Cap
-      <span style="color:#8b949e;font-size:10px;font-weight:normal;margin-left:8px;text-transform:none">Per-market exposure limit — price floor removed (each bot enforces its own)</span>
-    </h3>
-    <div style="display:flex;gap:32px;align-items:flex-end;flex-wrap:wrap">
-      <div>
-        <div style="color:#8b949e;font-size:11px;margin-bottom:4px">Max Per Market ($)</div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <input type="number" id="globalMaxPerMarket" min="1" max="1000" step="1" value="100" style="width:90px">
-          <span style="color:#8b949e;font-size:11px">Current: <b id="globalMaxPerMarketCur" style="color:#e6edf3">—</b></span>
-        </div>
-      </div>
-      <div>
-        <button onclick="saveGlobalSafety()" style="background:#58a6ff;color:#0d1117;padding:6px 18px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:bold">Save</button>
-        <span id="globalSafetyMsg" style="margin-left:10px;font-size:12px;color:#3fb950"></span>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- Bot Performance Summary -->
 <div class="section-pad">
@@ -1010,16 +983,6 @@ function _updateStateInner(s) {
     }).join('');
   }
 
-  // Update global safety current values
-  const gs = s.config.global_safety || {};
-  if (gs.max_per_market != null) {
-    document.getElementById('globalMaxPerMarketCur').textContent = '$' + gs.max_per_market;
-    if (!document.getElementById('globalMaxPerMarket')._gsLoaded) {
-      document.getElementById('globalMaxPerMarket').value = gs.max_per_market;
-      document.getElementById('globalMaxPerMarket')._gsLoaded = true;
-    }
-  }
-
   // Recent Trades
   const rtTbody = document.getElementById('recentTrades');
   if (!s.recent_trades || s.recent_trades.length === 0) {
@@ -1125,14 +1088,6 @@ function saveBot2() {
     window:     parseInt(document.getElementById('b2Window').value),
   }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); });
   document.getElementById('b2MinPrice')._loaded = false;
-}
-
-function saveGlobalSafety() {
-  const msg = document.getElementById('globalSafetyMsg');
-  api('/settings/global', {
-    max_per_market: parseFloat(document.getElementById('globalMaxPerMarket').value),
-  }).then(d => { msg.textContent = d.message || 'Saved'; msg.style.color='#3fb950'; setTimeout(()=>msg.textContent='',4000); })
-    .catch(e => { msg.textContent = 'Error: ' + e; msg.style.color='#f85149'; });
 }
 
 function saveBot3() {
@@ -1722,20 +1677,6 @@ async def update_bot3(data: ArbBotUpdate):
         bot.arb_bot.config = bot.config
     status = "enabled" if data.enabled else "disabled"
     return {"message": f"Bot 3 (Arb) updated — {status}, threshold={data.arb_threshold}, size=${data.size_usdc}/arb"}
-
-
-@app.post("/settings/global")
-async def update_global_safety(data: GlobalSafetyUpdate):
-    if data.max_per_market < 1:
-        raise HTTPException(400, "Global max_per_market must be at least $1")
-    config = load_config()
-    config.setdefault("global_safety", {})["max_per_market"] = data.max_per_market
-    save_config(config)
-    bot = get_bot()
-    if bot:
-        bot.config.setdefault("global_safety", {})["max_per_market"] = data.max_per_market
-        bot.execution.config["global_safety"] = config["global_safety"]
-    return {"message": f"Global safety updated — max_per_market=${data.max_per_market}"}
 
 
 @app.post("/settings/trade")
