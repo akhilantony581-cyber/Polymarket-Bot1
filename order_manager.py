@@ -65,8 +65,9 @@ class OrderManager:
     Runs per-order monitor loops that enforce timeouts and repricing.
     """
 
-    STANDARD_TIMEOUT = 20    # seconds
-    SNIPER_TIMEOUT = 5       # seconds
+    STANDARD_TIMEOUT = 30    # seconds
+    SNIPER_TIMEOUT = 30      # seconds
+    SNIPE_1H_TIMEOUT = 300   # seconds
     MAKER_TIMEOUT = 7200     # seconds
     SNIPER_REPRICE_INTERVAL = 3  # seconds
 
@@ -103,8 +104,10 @@ class OrderManager:
         std_cfg = self.config.get("standard", {})
         snp_cfg = self.config.get("sniper", {})
         mkr_cfg = self.config.get("maker", {})
+        s1h_cfg = self.config.get("snipe_1h", {})
         self.STANDARD_TIMEOUT = std_cfg.get("order_timeout_seconds", 20)
         self.SNIPER_TIMEOUT = snp_cfg.get("order_timeout_seconds", 5)
+        self.SNIPE_1H_TIMEOUT = s1h_cfg.get("order_timeout_seconds", self.SNIPER_TIMEOUT)
         self.MAKER_TIMEOUT = mkr_cfg.get("order_timeout_seconds", 7200)
         self.SNIPER_REPRICE_INTERVAL = snp_cfg.get("reprice_interval_seconds", 3)
 
@@ -494,9 +497,10 @@ class OrderManager:
         return {
             "standard": self.STANDARD_TIMEOUT,
             "sniper": self.SNIPER_TIMEOUT,
+            "sniper_1h": self.SNIPE_1H_TIMEOUT,
             "snipe2": self.SNIPER_TIMEOUT,
             "maker": self.MAKER_TIMEOUT,
-            "copy": 120,   # 2-minute window for copy-trade limit orders
+            "copy": 120,
         }.get(mode, self.STANDARD_TIMEOUT)
 
     @property

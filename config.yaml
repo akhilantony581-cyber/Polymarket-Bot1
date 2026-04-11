@@ -34,13 +34,13 @@ signal:
 
 # --- Standard Mode ---
 standard:
-  order_timeout_seconds: 20
+  order_timeout_seconds: 30
   passive_limit_offset: 0.001      # Place limit this far below best ask
 
 # --- Sniper Mode ---
 sniper:
   time_to_expiry_threshold: 60     # Seconds remaining to trigger sniper mode
-  order_timeout_seconds: 55
+  order_timeout_seconds: 30
   reprice_interval_seconds: 3
   oracle_strike_buffer: 0.003      # Abort if oracle within 0.3% of strike
   stability_check_seconds: 5
@@ -112,6 +112,7 @@ snipe_1h:
   max_per_trade: 10.0
   max_per_market: 60.0
   window_seconds: 900    # fire in last 15 minutes of the 1h market (was 25m)
+  order_timeout_seconds: 300
 
 
 # --- Bot 3 — Locked Arbitrage Market Maker ---
