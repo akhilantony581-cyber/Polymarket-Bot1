@@ -151,6 +151,7 @@ class OrderManager:
                 market_id=market.market_id,
                 size=usdc_size,
                 min_price=price,
+                mode=mode,
             )
         else:
             order = await self.execution.place_limit_order(

@@ -164,8 +164,8 @@ class ExecutionEngine:
             return None
 
         try:
-            price = round(price, 2)  # Polymarket tick size = $0.01
-            shares = round(size / price, 6)
+            price = round(price, 2)   # Polymarket tick size = $0.01
+            shares = round(size / price, 5)  # taker amount max 5 decimals
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price,
@@ -206,6 +206,7 @@ class ExecutionEngine:
         market_id: str,
         size: float,
         min_price: float = 0.95,  # unused, kept for call-site compatibility
+        mode: str = "snipe1",
     ) -> Optional[PlacedOrder]:
         """
         Submit a Fill-or-Kill order at price=0.99 (highest valid tick).
@@ -217,7 +218,8 @@ class ExecutionEngine:
 
         price = 0.99  # highest valid tick — FOK fills at best ask up to this price
         try:
-            shares = round(size / price, 6)
+            # Polymarket market orders: maker amount max 2 decimals, taker max 5
+            shares = round(size / price, 5)
             order_args = OrderArgs(
                 token_id=token_id,
                 price=price,
@@ -228,7 +230,7 @@ class ExecutionEngine:
             resp = self._clob.post_order(signed_order, OrderType.FOK)
             order_id = resp.get("orderID") or resp.get("order_id", "")
             if not order_id:
-                logger.warning(f"SNIPE2 FOK no order ID: {resp}")
+                logger.warning(f"FOK no order ID: {resp}")
                 return None
 
             order = PlacedOrder(
@@ -238,15 +240,15 @@ class ExecutionEngine:
                 side="buy",
                 price=price,
                 size=shares,
-                mode="snipe2",
+                mode=mode,
             )
             logger.info(
-                f"SNIPE2 FOK placed {order_id} "
-                f"shares={shares:.4f} market={market_id[:16]}..."
+                f"FOK placed {order_id} "
+                f"shares={shares:.5f} market={market_id[:16]}..."
             )
             return order
         except Exception as e:
-            logger.error(f"SNIPE2 market order failed: {e}")
+            logger.error(f"FOK market order failed: {e}")
             return None
 
     # ------------------------------------------------------------------
