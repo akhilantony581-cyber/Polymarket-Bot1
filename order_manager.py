@@ -144,10 +144,8 @@ class OrderManager:
 
         effective_token = token_id or market.trade_token_id
 
-        if mode in ("snipe1", "snipe2"):
+        if mode in ("snipe1", "snipe2", "snipe3"):
             # FOK (Fill or Kill) = market order: fills at best ask or cancels instantly.
-            # Pass price as min_price so engine verifies the real token price hasn't
-            # dropped below the threshold between the scan check and submission.
             order = await self.execution.place_market_order(
                 token_id=effective_token,
                 market_id=market.market_id,
@@ -195,7 +193,7 @@ class OrderManager:
         market = pos.market
         mode = pos.mode
         # FOK modes: market order fills instantly or cancels — just poll once
-        if mode in ("snipe1", "snipe2"):
+        if mode in ("snipe1", "snipe2", "snipe3"):
             await asyncio.sleep(1.0)
             status = await self.execution.get_order_status(order)
             if status == OrderStatus.FILLED:
@@ -498,6 +496,7 @@ class OrderManager:
         return {
             "standard": self.STANDARD_TIMEOUT,
             "snipe1": 15,          # FOK — 15s window, single poll
+            "snipe3": 15,          # FOK — 15s window, single poll
             "sniper": self.SNIPER_TIMEOUT,
             "sniper_1h": self.SNIPE_1H_TIMEOUT,
             "snipe2": self.SNIPER_TIMEOUT,

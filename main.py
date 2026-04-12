@@ -501,14 +501,14 @@ class TradingBot:
 
         await asyncio.gather(*[_submit_one(m, s, p, sz) for m, s, p, sz in qualifying])
 
-        # ── Snipe 3: contrarian bet — buy losing side at ≤ $0.02 in 5m markets ──
+        # ── Snipe 3: latency trader — buy Binance-confirmed winning side, last 15s ──
         s3 = self.config.get("snipe3", {})
         if not s3.get("enabled", True) or bot1_paused:
             return
-        s3_max_price  = s3.get("max_entry_price", 0.02)
-        s3_max_trade  = s3.get("max_per_trade", 1.0)
-        s3_max_market = s3.get("max_per_market", 2.0)
-        s3_window     = s3.get("window_seconds", 180)
+        s3_min_price  = s3.get("min_entry_price", 0.99)
+        s3_max_trade  = s3.get("max_per_trade", 20.0)
+        s3_max_market = s3.get("max_per_market", 20.0)
+        s3_window     = s3.get("window_seconds", 15)
         s3_buffer     = s3.get("strike_buffer", 0.003)
 
         s3_qualifying = []
@@ -520,41 +520,37 @@ class TradingBot:
             if market.seconds_to_expiry > s3_window:
                 continue
 
-            # Determine the cheap/losing side
-            yes_price = market.yes_price
-            no_price  = round(1.0 - yes_price, 4)
+            # Winning side and its price
+            side, price = market.best_trade_side
+            price = min(price, 0.99)
+            if price < s3_min_price:
+                continue  # winning side not yet at threshold
 
-            if yes_price <= s3_max_price and yes_price > 0:
-                contra_side  = "yes"
-                contra_price = yes_price
-                contra_token = market.yes_token_id
-            elif no_price <= s3_max_price and no_price > 0:
-                contra_side  = "no"
-                contra_price = no_price
-                contra_token = market.no_token_id
-            else:
-                continue  # neither side cheap enough
-
-            # Fixed-strike markets: Binance must be within strike_buffer of strike
-            # (if price is far from strike reversal is very unlikely)
+            # Binance confirmation for fixed-strike markets:
+            # Binance must be clearly beyond the strike in the expected direction.
             if market.strike > 0:
                 bd = self.binance.get(market.coin)
-                if bd and self.binance.is_ready(market.coin):
-                    distance = abs(bd.price - market.strike) / market.strike
-                    if distance > s3_buffer:
+                if not (bd and self.binance.is_ready(market.coin)):
+                    continue  # no Binance data — skip, can't confirm direction
+                if side == "yes":
+                    if (bd.price - market.strike) / market.strike < s3_buffer:
                         logger.debug(
-                            f"S3 strike skip {market.coin} distance={distance:.4f} > {s3_buffer}"
+                            f"S3 Binance not above strike {market.coin} "
+                            f"binance={bd.price:.2f} strike={market.strike:.2f}"
                         )
                         continue
-
-            # Volatility gate still applies — no point betting in ultra-chaotic markets
-            if vg_enabled:
-                bd = self.binance.get(market.coin)
-                if bd and self.binance.is_ready(market.coin) and bd.price > 0:
-                    vol = bd.volatility(vg_window)
-                    if vol is not None and vol / bd.price * 100 > vg_max_vol:
-                        logger.debug(f"S3 vol gate SKIP {market.coin}")
+                else:  # buying NO
+                    if (market.strike - bd.price) / market.strike < s3_buffer:
+                        logger.debug(
+                            f"S3 Binance not below strike {market.coin} "
+                            f"binance={bd.price:.2f} strike={market.strike:.2f}"
+                        )
                         continue
+            # For up/down markets (no fixed strike), Polymarket price ≥ 0.99
+            # is itself sufficient confirmation — proceed
+
+            if self._market_has_active_order(market.market_id):
+                continue
 
             market_exp = self._market_exposure(market.market_id)
             if market_exp >= s3_max_market:
@@ -565,14 +561,15 @@ class TradingBot:
                 break
 
             size = min(s3_max_trade, s3_max_market - market_exp)
-            if size < 0.50:
+            if size < 1.0:
                 continue
 
-            s3_qualifying.append((market, contra_side, contra_price, contra_token, size))
+            token_id = market.yes_token_id if side == "yes" else market.no_token_id
+            s3_qualifying.append((market, side, price, token_id, size))
 
         async def _submit_snipe3(market, side, price, token_id, size):
             logger.info(
-                f"SNIPE3 [{market.coin} {market.timeframe}] CONTRA "
+                f"SNIPE3 [{market.coin} {market.timeframe}] LATENCY "
                 f"{side.upper()}@{price:.4f} size=${size:.2f} tte={market.seconds_to_expiry:.0f}s"
             )
             pos = await self.order_manager.submit(

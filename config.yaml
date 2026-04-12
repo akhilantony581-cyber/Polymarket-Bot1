@@ -92,17 +92,17 @@ momentum_gate:
   min_pct: 0.05
   boundary_pct: 0.03
 
-# --- Snipe 3 — Contrarian bet on 5m markets (buy losing side at ≤ $0.02) ---
-# Buys the cheap/losing side (YES or NO) when it is priced at or below max_entry_price.
-# For fixed-strike markets: only fires when Binance price is within strike_buffer of
-# the strike (reversal is plausible). For Up/Down markets: fires on price alone.
+# --- Snipe 3 — Latency trader on 5m markets (buy Binance-confirmed winning side) ---
+# Buys the winning side (YES or NO) at ≥ min_entry_price in the last 15 seconds.
+# For fixed-strike markets: Binance price must be clearly beyond the strike by
+# strike_buffer to confirm the winning direction. FOK market order for speed.
 snipe3:
   enabled: true
-  max_entry_price: 0.02     # buy whichever side costs ≤ 2 cents
-  max_per_trade: 1.0
-  max_per_market: 2.0
-  window_seconds: 180       # last 3 minutes of the 5m market
-  strike_buffer: 0.003      # fixed-strike only: Binance must be within 0.3% of strike
+  min_entry_price: 0.99     # buy winning side when Polymarket price ≥ 0.99
+  max_per_trade: 20.0
+  max_per_market: 20.0
+  window_seconds: 15        # last 15 seconds of the 5m market
+  strike_buffer: 0.003      # fixed-strike only: Binance must be this % beyond strike
   order_timeout_seconds: 30
 
 # --- 1h Sniper (separate settings from 5m/15m) ---
