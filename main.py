@@ -608,10 +608,16 @@ class TradingBot:
         if market.is_expired or market.seconds_to_expiry <= 0:
             return  # missed the window — market already resolved
 
+        side, current_price = market.best_trade_side
+        if current_price < 0.99:
+            logger.debug(
+                f"SNIPE4 [BTC 5m] skip — {side.upper()} price {current_price:.4f} < 0.99"
+            )
+            return
+
         s4 = self.config.get("snipe4", {})
         price    = 0.99
         size     = float(s4.get("size_usdc", 50.0))
-        side, _  = market.best_trade_side
 
         logger.info(
             f"SNIPE4 [BTC 5m] {side.upper()}@{price} "
