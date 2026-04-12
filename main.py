@@ -601,7 +601,7 @@ class TradingBot:
 
     async def _snipe4_fire(self, market) -> None:
         """Sleep until tte=1s, then place a hard limit@0.99 $50 — no checks, pure speed."""
-        delay = market.seconds_to_expiry - 1.0
+        delay = market.seconds_to_expiry - 2.0
         if delay > 0:
             await asyncio.sleep(delay)
 
