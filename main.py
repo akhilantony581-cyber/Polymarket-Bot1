@@ -59,6 +59,7 @@ class TradingBot:
         self._config_path = "config.yaml"
         self._last_config_mtime = 0.0
         self._last_scan_time = time.time()  # tracks last successful scan cycle
+        self._snipe4_scheduled: set = set()  # market_ids already scheduled for snipe4
 
         # Initialize all modules
         coins = config["markets"]["coins"]
@@ -209,6 +210,9 @@ class TradingBot:
                     for pos in self.order_manager.filled_positions.values()
                     if not pos.redeemed
                 }
+                # Prune expired market IDs from snipe4 scheduler
+                active_ids = {m.market_id for m in self.poly_listener.markets.values()}
+                self._snipe4_scheduled -= (self._snipe4_scheduled - active_ids)
                 await self._scan_markets()
                 await self._scan_maker_both_sides()
                 self._last_scan_time = time.time()
@@ -581,6 +585,46 @@ class TradingBot:
 
         if s3_qualifying:
             await asyncio.gather(*[_submit_snipe3(m, s, p, t, sz) for m, s, p, t, sz in s3_qualifying])
+
+        # ── Snipe 4: BTC 5m — schedule limit@0.99 $50 to fire at exactly tte=1s ──
+        s4 = self.config.get("snipe4", {})
+        if s4.get("enabled", True) and not bot1_paused:
+            for market in list(self.poly_listener.markets.values()):
+                if market.coin != "BTC" or market.timeframe != "5m":
+                    continue
+                if market.is_expired or market.seconds_to_expiry <= 0:
+                    continue
+                if market.market_id in self._snipe4_scheduled:
+                    continue
+                self._snipe4_scheduled.add(market.market_id)
+                asyncio.create_task(self._snipe4_fire(market))
+
+    async def _snipe4_fire(self, market) -> None:
+        """Sleep until tte=1s, then place a hard limit@0.99 $50 — no checks, pure speed."""
+        delay = market.seconds_to_expiry - 1.0
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+        if market.is_expired or market.seconds_to_expiry <= 0:
+            return  # missed the window — market already resolved
+
+        s4 = self.config.get("snipe4", {})
+        price    = 0.99
+        size     = float(s4.get("size_usdc", 50.0))
+        side, _  = market.best_trade_side
+
+        logger.info(
+            f"SNIPE4 [BTC 5m] {side.upper()}@{price} "
+            f"size=${size:.2f} tte={market.seconds_to_expiry:.2f}s"
+        )
+        pos = await self.order_manager.submit(
+            market=market,
+            price=price,
+            usdc_size=size,
+            mode="snipe4",
+        )
+        if pos:
+            self.risk_manager.record_trade_open(pos)
 
     # ------------------------------------------------------------------
     # MARKET MAKER — both sides, 10 contracts, price 0.90–0.97

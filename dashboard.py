@@ -386,6 +386,29 @@ DASHBOARD_HTML = """
     <button class="btn-save" onclick="saveSnipe3()" style="margin-top:8px">💾 Save Snipe 3</button>
     <div id="snipe3Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
   </div>
+
+  <div class="card">
+    <h3>Bot 1 — Snipe 4 (BTC 5m precision)</h3>
+    <p style="color:#8b949e;font-size:11px;margin:0 0 8px">Schedules a limit order at exactly tte=1s on BTC 5m markets. Price 0.99, $50 hard-coded — no gates, pure speed.</p>
+    <div class="control-row">
+      <label>Enabled</label>
+      <input type="checkbox" id="s4Enabled" checked style="width:auto">
+    </div>
+    <div class="control-row">
+      <label>Price</label>
+      <span style="color:#e6edf3;font-size:13px">0.99 (fixed)</span>
+    </div>
+    <div class="control-row">
+      <label>Size per Trade ($)</label>
+      <input type="number" id="s4SizeUsdc" min="1" max="200" step="1" value="50">
+    </div>
+    <div class="control-row">
+      <label>Fire at TTE</label>
+      <span style="color:#e6edf3;font-size:13px">1 second (fixed)</span>
+    </div>
+    <button class="btn-save" onclick="saveSnipe4()" style="margin-top:8px">💾 Save Snipe 4</button>
+    <div id="snipe4Msg" style="margin-top:8px;font-size:12px;color:#3fb950"></div>
+  </div>
 </div>
 </div>
 
@@ -812,6 +835,12 @@ function _updateStateInner(s) {
       if (b1pm) b1pm.textContent = '$' + (s.config.max_per_market || '—');
       if (b1w && s.config.snipe1_window_seconds != null) b1w.textContent = s.config.snipe1_window_seconds + 's';
     }
+    if (s.config.snipe4 && !document.getElementById('s4SizeUsdc')._loaded) {
+      const s4 = s.config.snipe4;
+      document.getElementById('s4Enabled').checked  = s4.enabled !== false;
+      document.getElementById('s4SizeUsdc').value   = s4.size_usdc || 50;
+      document.getElementById('s4SizeUsdc')._loaded = true;
+    }
     if (s.config.snipe3 && !document.getElementById('s3MinPrice')._loaded) {
       const s3 = s.config.snipe3;
       document.getElementById('s3Enabled').checked      = s3.enabled !== false;
@@ -1129,6 +1158,13 @@ async function manualRedeem() {
   });
   const data = await resp.json();
   document.getElementById('redeemResult').textContent = data.message || data.detail || JSON.stringify(data);
+}
+
+function saveSnipe4() {
+  api('/settings/snipe4', {
+    enabled:   document.getElementById('s4Enabled').checked,
+    size_usdc: parseFloat(document.getElementById('s4SizeUsdc').value),
+  }, 'snipe4Msg');
 }
 
 function saveSnipe3() {
@@ -1866,6 +1902,25 @@ async def cancel_order(data: CancelOrderRequest):
     raise HTTPException(500, "Cancel failed")
 
 
+
+
+class Snipe4Update(BaseModel):
+    enabled: bool = True
+    size_usdc: float = 50.0
+
+
+@app.post("/settings/snipe4")
+async def update_snipe4(data: Snipe4Update):
+    config = load_config()
+    config["snipe4"] = {
+        "enabled":   data.enabled,
+        "size_usdc": data.size_usdc,
+    }
+    save_config(config)
+    bot = get_bot()
+    if bot:
+        bot.config["snipe4"] = config["snipe4"]
+    return {"message": f"Snipe 4 updated — {'enabled' if data.enabled else 'disabled'}, ${data.size_usdc}/trade"}
 
 
 class Snipe3Update(BaseModel):

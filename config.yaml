@@ -105,6 +105,13 @@ snipe3:
   strike_buffer: 0.003      # fixed-strike only: Binance must be this % beyond strike
   order_timeout_seconds: 30
 
+# --- Snipe 4 — BTC 5m precision limit at tte=1s ---
+# Schedules a hard limit order at exactly 1 second before the 5m BTC market closes.
+# No gates, no checks, no Binance confirmation — pure speed.
+snipe4:
+  enabled: true
+  size_usdc: 50.0           # exactly $50 per trade
+
 # --- 1h Sniper (separate settings from 5m/15m) ---
 snipe_1h:
   enabled: true

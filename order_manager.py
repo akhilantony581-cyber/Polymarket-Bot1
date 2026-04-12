@@ -497,6 +497,7 @@ class OrderManager:
             "standard": self.STANDARD_TIMEOUT,
             "snipe1": 15,          # FOK — 15s window, single poll
             "snipe3": 15,          # FOK — 15s window, single poll
+            "snipe4": 10,          # limit at tte=1s — 10s covers resolution lag
             "sniper": self.SNIPER_TIMEOUT,
             "sniper_1h": self.SNIPE_1H_TIMEOUT,
             "snipe2": self.SNIPER_TIMEOUT,
