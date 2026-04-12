@@ -374,6 +374,8 @@ class TradingBot:
         for market in list(self.poly_listener.markets.values()):
             if market.is_expired:
                 continue
+            if market.seconds_to_expiry <= 0:
+                continue  # expired by clock even if flag not yet set
 
             # Route 1h markets to their own settings
             if market.timeframe == "1h":
@@ -517,6 +519,8 @@ class TradingBot:
                 continue
             if market.is_expired:
                 continue
+            if market.seconds_to_expiry <= 0:
+                continue  # expired by clock even if flag not yet set
             if market.seconds_to_expiry > s3_window:
                 continue
 
