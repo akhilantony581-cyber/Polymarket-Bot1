@@ -108,8 +108,8 @@ snipe3:
 # --- 1h Sniper (separate settings from 5m/15m) ---
 snipe_1h:
   enabled: true
-  min_price: 0.92
-  max_per_trade: 10.0
+  min_price: 0.90
+  max_per_trade: 15.0
   max_per_market: 60.0
   window_seconds: 900    # fire in last 15 minutes of the 1h market (was 25m)
   order_timeout_seconds: 300
