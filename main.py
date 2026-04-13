@@ -880,7 +880,7 @@ class TradingBot:
     # ------------------------------------------------------------------
     async def _keepalive_loop(self):
         """
-        Ping every 60s to prevent idle timeouts.
+        Ping every 30s to prevent idle timeouts.
         - Pings localhost to keep the internal event loop warm.
         - Pings the Railway public URL (if set) to generate external inbound
           traffic so Railway never considers the service idle/sleepy.
@@ -890,6 +890,10 @@ class TradingBot:
         # Railway injects RAILWAY_PUBLIC_DOMAIN automatically — no manual env var needed
         domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "") or os.environ.get("RAILWAY_PUBLIC_URL", "")
         public_url = (f"https://{domain}" if domain and not domain.startswith("http") else domain).rstrip("/")
+        if not public_url:
+            logger.warning("[KEEPALIVE] No RAILWAY_PUBLIC_DOMAIN set — external ping disabled. Railway may idle-kill after 30-40min.")
+        else:
+            logger.info(f"[KEEPALIVE] External ping enabled → {public_url}/ping every 30s")
         await asyncio.sleep(30)  # wait for server to start
         while self._running:
             try:
@@ -897,10 +901,12 @@ class TradingBot:
                     await c.get(f"http://localhost:{port}/ping")
                     if public_url:
                         await c.get(f"{public_url}/ping")
-                        logger.debug(f"External keepalive ping → {public_url}/ping")
+                        logger.info(f"[KEEPALIVE] External ping OK → {public_url}/ping")
+                    else:
+                        logger.info("[KEEPALIVE] Internal ping OK (no external URL configured)")
             except Exception as e:
-                logger.debug(f"Keepalive ping failed: {e}")
-            await asyncio.sleep(60)
+                logger.warning(f"[KEEPALIVE] Ping failed: {e}")
+            await asyncio.sleep(30)
 
     async def _config_watcher(self):
         interval = self.config.get("dashboard", {}).get("config_watch_interval", 2.0)
